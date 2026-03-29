@@ -333,8 +333,9 @@ namespace MailPull
                 // Folder filter: col 5 (folder_path) starts with selected folder
                 if (_selectedFolder.Length > 0)
                 {
-                    string fp = r.Length > 5 ? r[5] : "";
-                    if (!fp.StartsWith(_selectedFolder, StringComparison.OrdinalIgnoreCase))
+                    string fp = r.Length > 5 ? r[5].TrimStart('\\') : "";
+                    string sel = _selectedFolder.TrimStart('\\');
+                    if (!fp.StartsWith(sel, StringComparison.OrdinalIgnoreCase))
                         continue;
                 }
 
