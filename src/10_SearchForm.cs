@@ -7,7 +7,7 @@ using System.Windows.Data;
 using System.Windows.Input;
 using System.Windows.Media;
 
-namespace MailPull
+namespace WatchBox
 {
     public class SearchWindow : Window
     {
@@ -21,11 +21,9 @@ namespace MailPull
         UIElement _placeholder;
         TextBlock _statusText;
 
-        // Records per profile index
         Dictionary<int, List<string[]>> _profileRecords = new Dictionary<int, List<string[]>>();
-        // Active records (filtered by selected profile)
+        Dictionary<int, string> _profileTypes = new Dictionary<int, string>();
         List<string[]> _activeRecords = new List<string[]>();
-        // Currently displayed (after folder + search filter)
         List<string[]> _currentRecords = new List<string[]>();
         string _selectedFolder = "";
 
@@ -72,7 +70,7 @@ namespace MailPull
             });
             phPanel.Children.Add(new TextBlock
             {
-                Text = "Search mail",
+                Text = "Search...",
                 Foreground = new SolidColorBrush(Color.FromRgb(180, 180, 180)),
                 FontSize = 12
             });
@@ -134,11 +132,10 @@ namespace MailPull
 
             Grid.SetColumn(leftPanel, 0);
             mainGrid.Children.Add(leftPanel);
-
             mainGrid.Children.Add(MkVSplitter(1));
             mainGrid.Children.Add(MkVSplitter(3));
 
-            // Center: mail list
+            // Center: item list
             _mailList = new ListView { BorderThickness = new Thickness(0) };
             var gridView = new GridView();
             gridView.Columns.Add(new GridViewColumn
@@ -149,30 +146,30 @@ namespace MailPull
             });
             gridView.Columns.Add(new GridViewColumn
             {
-                Header = "Subject",
+                Header = "Name",
                 DisplayMemberBinding = new Binding("[1]"),
                 HeaderContainerStyle = LeftAlignStyle()
             });
-            var attachCol = new GridViewColumn
+            var extraCol = new GridViewColumn
             {
-                Width = 32,
+                Width = 50,
                 DisplayMemberBinding = new Binding("[2]"),
                 HeaderContainerStyle = LeftAlignStyle()
             };
-            var attachHeader = new TextBlock
+            var extraHeader = new TextBlock
             {
                 Text = "\uE723",
                 FontFamily = new FontFamily("Segoe MDL2 Assets"),
                 FontSize = 12
             };
-            attachCol.Header = attachHeader;
-            gridView.Columns.Add(attachCol);
+            extraCol.Header = extraHeader;
+            gridView.Columns.Add(extraCol);
             _mailList.View = gridView;
-            _mailList.SelectionChanged += OnMailSelected;
+            _mailList.SelectionChanged += OnItemSelected;
             _mailList.SizeChanged += (s, e) =>
             {
                 if (gridView.Columns.Count > 2)
-                    gridView.Columns[1].Width = _mailList.ActualWidth - 132;
+                    gridView.Columns[1].Width = _mailList.ActualWidth - 152;
             };
             Grid.SetColumn(_mailList, 2);
             mainGrid.Children.Add(_mailList);
@@ -217,7 +214,7 @@ namespace MailPull
             var attachPanel = new DockPanel();
             var attachHdr = new TextBlock
             {
-                Text = " Attachments", FontSize = 11,
+                Text = " Attachments / Files", FontSize = 11,
                 Padding = new Thickness(12, 4, 0, 4),
                 Foreground = new SolidColorBrush(Color.FromRgb(100, 100, 100)),
                 Background = new SolidColorBrush(Color.FromRgb(248, 248, 248))
@@ -263,19 +260,98 @@ namespace MailPull
             return style;
         }
 
+        // Detect record type: mail has entry_id-style IDs (long hex), folder has short hex
+        static bool IsMailRecord(string[] cols)
+        {
+            // Mail manifest: 11 columns, folder manifest: 7 columns
+            return cols.Length >= 11;
+        }
+
+        // --- Column accessors by type ---
+        // Mail: entry_id(0) sender_email(1) sender_name(2) subject(3) received_at(4)
+        //       folder_path(5) body_path(6) msg_path(7) attachment_paths(8) mail_folder(9) body_text(10)
+        // Folder: item_id(0) file_name(1) file_path(2) folder_path(3) relative_path(4)
+        //         file_size(5) modified_at(6)
+
+        static string RecordDate(string[] r)
+        {
+            if (IsMailRecord(r))
+                return r.Length > 4 ? r[4] : "";
+            return r.Length > 6 ? r[6] : "";  // modified_at
+        }
+
+        static string RecordName(string[] r)
+        {
+            if (IsMailRecord(r))
+                return r.Length > 3 ? r[3] : "";  // subject
+            return r.Length > 1 ? r[1] : "";  // file_name
+        }
+
+        static string RecordFolderPath(string[] r)
+        {
+            if (IsMailRecord(r))
+                return r.Length > 5 ? r[5] : "";
+            return r.Length > 3 ? r[3] : "";
+        }
+
+        static string RecordExtra(string[] r)
+        {
+            if (IsMailRecord(r))
+            {
+                // Attachment count
+                string att = r.Length > 8 ? r[8] : "";
+                if (string.IsNullOrEmpty(att)) return "";
+                return att.Split('|').Length.ToString();
+            }
+            // File size
+            return r.Length > 5 ? FormatSize(r[5]) : "";
+        }
+
+        static string FormatSize(string sizeStr)
+        {
+            long size;
+            if (!long.TryParse(sizeStr, out size)) return sizeStr;
+            if (size < 1024) return size + " B";
+            if (size < 1048576) return (size / 1024) + " KB";
+            return string.Format("{0:0.0} MB", size / 1048576.0);
+        }
+
+        static bool RecordMatchesQuery(string[] r, string q)
+        {
+            if (IsMailRecord(r))
+            {
+                string subject = r.Length > 3 ? r[3].ToLower() : "";
+                string email = r.Length > 1 ? r[1].ToLower() : "";
+                string name = r.Length > 2 ? r[2].ToLower() : "";
+                string attach = r.Length > 8 ? r[8].ToLower() : "";
+                string body = r.Length > 10 ? r[10].ToLower() : "";
+                return subject.Contains(q) || email.Contains(q) || name.Contains(q)
+                    || attach.Contains(q) || body.Contains(q);
+            }
+            else
+            {
+                string fileName = r.Length > 1 ? r[1].ToLower() : "";
+                string filePath = r.Length > 2 ? r[2].ToLower() : "";
+                string relPath = r.Length > 4 ? r[4].ToLower() : "";
+                return fileName.Contains(q) || filePath.Contains(q) || relPath.Contains(q);
+            }
+        }
+
         // --- Load all profiles' manifest data ---
 
         void LoadData()
         {
             _profileRecords.Clear();
+            _profileTypes.Clear();
             _cmbProfile.Items.Clear();
             _cmbProfile.Items.Add("(All)");
 
             for (int p = 0; p < Config.ProfileCount; p++)
             {
                 _cmbProfile.Items.Add(Config.PGet(p, "name", "Profile " + (p + 1)));
+                _profileTypes[p] = Config.PGet(p, "type", "mail");
                 var records = new List<string[]>();
-                string root = Config.PGet(p, "export_root");
+                string root = Config.PGet(p, "output_root");
                 if (!string.IsNullOrEmpty(root))
                 {
                     string csvPath = Path.Combine(root, "manifest.csv");
@@ -284,7 +360,8 @@ namespace MailPull
                         {
                             if (string.IsNullOrEmpty(line)) continue;
                             var cols = line.Split(',');
-                            if (cols.Length < 6 || cols[0] == "entry_id") continue;
+                            if (cols.Length < 2) continue;
+                            if (cols[0] == "entry_id" || cols[0] == "item_id") continue;
                             records.Add(cols);
                         }
                 }
@@ -308,7 +385,7 @@ namespace MailPull
         void RebuildActive()
         {
             _activeRecords.Clear();
-            int sel = _cmbProfile.SelectedIndex - 1; // -1 = all
+            int sel = _cmbProfile.SelectedIndex - 1;
             var seenIds = new HashSet<string>();
 
             if (sel < 0)
@@ -334,7 +411,7 @@ namespace MailPull
             _treeView.Items.Clear();
             var folders = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             foreach (var r in _activeRecords)
-                if (r.Length > 5) folders.Add(r[5]);
+                folders.Add(RecordFolderPath(r));
 
             var nodes = new Dictionary<string, TreeViewItem>(StringComparer.OrdinalIgnoreCase);
             var sorted = new List<string>(folders);
@@ -342,6 +419,7 @@ namespace MailPull
 
             foreach (var fp in sorted)
             {
+                if (string.IsNullOrEmpty(fp)) continue;
                 var parts = new List<string>();
                 foreach (var p in fp.Split('\\'))
                     if (p.Length > 0) parts.Add(p);
@@ -392,43 +470,41 @@ namespace MailPull
             {
                 if (_selectedFolder.Length > 0)
                 {
-                    string fp = r.Length > 5 ? r[5].TrimStart('\\') : "";
+                    string fp = RecordFolderPath(r).TrimStart('\\');
                     string sel = _selectedFolder.TrimStart('\\');
                     if (!fp.StartsWith(sel, StringComparison.OrdinalIgnoreCase))
                         continue;
                 }
 
-                if (q.Length > 0)
-                {
-                    string subject = r.Length > 3 ? r[3].ToLower() : "";
-                    string email = r.Length > 1 ? r[1].ToLower() : "";
-                    string name = r.Length > 2 ? r[2].ToLower() : "";
-                    string attach = r.Length > 8 ? r[8].ToLower() : "";
-                    string body = r.Length > 10 ? r[10].ToLower() : "";
-
-                    if (!subject.Contains(q) && !email.Contains(q) && !name.Contains(q)
-                        && !attach.Contains(q) && !body.Contains(q))
-                        continue;
-                }
+                if (q.Length > 0 && !RecordMatchesQuery(r, q))
+                    continue;
 
                 _currentRecords.Add(r);
-                string date = r.Length > 4 ? (r[4].Length >= 10 ? r[4].Substring(0, 10) : r[4]) : "";
-                string att = r.Length > 8 && !string.IsNullOrEmpty(r[8])
-                    ? r[8].Split('|').Length.ToString() : "";
-                _mailList.Items.Add(new[] { date, r.Length > 3 ? r[3] : "", att });
+                string date = RecordDate(r);
+                if (date.Length >= 10) date = date.Substring(0, 10);
+                _mailList.Items.Add(new[] { date, RecordName(r), RecordExtra(r) });
             }
 
-            _statusText.Text = string.Format("{0} mail(s)", _currentRecords.Count);
+            _statusText.Text = string.Format("{0} item(s)", _currentRecords.Count);
         }
 
-        // --- Mail selected ---
+        // --- Item selected ---
 
-        void OnMailSelected(object sender, SelectionChangedEventArgs e)
+        void OnItemSelected(object sender, SelectionChangedEventArgs e)
         {
             int idx = _mailList.SelectedIndex;
             if (idx < 0 || idx >= _currentRecords.Count) return;
 
             var r = _currentRecords[idx];
+
+            if (IsMailRecord(r))
+                ShowMailDetail(r);
+            else
+                ShowFileDetail(r);
+        }
+
+        void ShowMailDetail(string[] r)
+        {
             string name = r.Length > 2 ? r[2] : "";
             string email = r.Length > 1 ? r[1] : "";
             string date = r.Length > 4 ? r[4] : "";
@@ -449,7 +525,7 @@ namespace MailPull
             catch { _bodyBox.Text = r.Length > 10 ? r[10] : ""; }
 
             _attachList.Items.Clear();
-            if (!string.IsNullOrEmpty(mailDir))
+            if (!string.IsNullOrEmpty(mailDir) && Directory.Exists(mailDir))
             {
                 try
                 {
@@ -465,6 +541,38 @@ namespace MailPull
                     }
                 }
                 catch { }
+            }
+        }
+
+        void ShowFileDetail(string[] r)
+        {
+            string fileName = r.Length > 1 ? r[1] : "";
+            string filePath = r.Length > 2 ? r[2] : "";
+            string folderPath = r.Length > 3 ? r[3] : "";
+            string relativePath = r.Length > 4 ? r[4] : "";
+            string fileSize = r.Length > 5 ? FormatSize(r[5]) : "";
+            string modifiedAt = r.Length > 6 ? r[6] : "";
+
+            _headerBlock.Text = string.Format("Name: {0}\nPath: {1}\nSize: {2}\nModified: {3}",
+                fileName, relativePath, fileSize, modifiedAt);
+            _bodyBox.Text = "";
+
+            _attachList.Items.Clear();
+            if (!string.IsNullOrEmpty(filePath) && File.Exists(filePath))
+            {
+                _attachList.Items.Add(new ListBoxItem
+                {
+                    Content = "Open: " + fileName, Tag = filePath,
+                    Padding = new Thickness(8, 3, 8, 3)
+                });
+            }
+            if (!string.IsNullOrEmpty(folderPath) && Directory.Exists(folderPath))
+            {
+                _attachList.Items.Add(new ListBoxItem
+                {
+                    Content = "Open folder", Tag = folderPath,
+                    Padding = new Thickness(8, 3, 8, 3)
+                });
             }
         }
 

@@ -1,7 +1,7 @@
 using System;
 using System.Runtime.InteropServices;
 
-namespace MailPull
+namespace WatchBox
 {
     public static class FolderPicker
     {

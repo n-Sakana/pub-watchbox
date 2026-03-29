@@ -3,7 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Text.RegularExpressions;
 
-namespace MailPull
+namespace WatchBox
 {
     public static class App
     {
@@ -34,7 +34,6 @@ namespace MailPull
                     _data[m.Groups[1].Value] = m.Groups[2].Value
                         .Replace("\\\\", "\x01").Replace("\\n", "\n").Replace("\x01", "\\");
             }
-            Migrate();
         }
 
         public static void Save()
@@ -64,8 +63,14 @@ namespace MailPull
         public static void Remove(string key) { _data.Remove(key); }
 
         // --- Profile support ---
-        // Keys: p0_name, p0_account, p0_folder_path, p0_since, p0_filter_mode, p0_filters, p0_export_root, p0_poll_seconds
-        static readonly string[] ProfileKeys = { "name", "account", "folder_path", "since", "filter_mode", "filters", "export_root", "flat_output", "poll_seconds" };
+        static readonly string[] ProfileKeys = {
+            // Common: mail or folder
+            "name", "type", "output_root", "notify", "log_enabled",
+            // Mail-specific
+            "account", "outlook_folder", "since", "filter_mode", "filters", "flat_output",
+            // Folder-specific (source_folder optional: set = copy mode, empty = manifest-only)
+            "source_folder", "recurse"
+        };
 
         public static int ProfileCount
         {
@@ -91,7 +96,18 @@ namespace MailPull
             int idx = ProfileCount;
             Set("profile_count", (idx + 1).ToString());
             PSet(idx, "name", name);
-            PSet(idx, "poll_seconds", "60");
+            PSet(idx, "type", "mail");
+            PSet(idx, "output_root", "");
+            PSet(idx, "notify", "1");
+            PSet(idx, "log_enabled", "1");
+            PSet(idx, "account", "");
+            PSet(idx, "outlook_folder", "");
+            PSet(idx, "since", "");
+            PSet(idx, "filter_mode", "or");
+            PSet(idx, "filters", "");
+            PSet(idx, "flat_output", "0");
+            PSet(idx, "source_folder", "");
+            PSet(idx, "recurse", "1");
             return idx;
         }
 
@@ -99,35 +115,13 @@ namespace MailPull
         {
             int count = ProfileCount;
             if (idx < 0 || idx >= count) return;
-            // Shift subsequent profiles down
             for (int i = idx; i < count - 1; i++)
                 foreach (var k in ProfileKeys)
                     PSet(i, k, PGet(i + 1, k));
-            // Remove last profile's keys
             for (int i = 0; i < ProfileKeys.Length; i++)
                 Remove(string.Format("p{0}_{1}", count - 1, ProfileKeys[i]));
             Set("profile_count", (count - 1).ToString());
         }
 
-        // Migrate old single-profile config to profile 0
-        static void Migrate()
-        {
-            if (ProfileCount > 0) return;
-            string root = Get("export_root");
-            if (string.IsNullOrEmpty(root)) return;
-
-            Set("profile_count", "1");
-            PSet(0, "name", "Default");
-            PSet(0, "account", Get("account"));
-            PSet(0, "folder_path", Get("folder_path"));
-            PSet(0, "export_root", root);
-            PSet(0, "since", Get("export_since"));
-            PSet(0, "poll_seconds", Get("poll_seconds", "60"));
-
-            // Clean old keys
-            Remove("account"); Remove("folder_path"); Remove("export_root");
-            Remove("export_since"); Remove("export_days"); Remove("poll_seconds");
-            Remove("poll_days");
-        }
     }
 }

@@ -5,19 +5,31 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
 
-namespace MailPull
+namespace WatchBox
 {
     public class SettingsWindow : Window
     {
         ComboBox _cmbProfile;
         TextBox _txtName;
+        ComboBox _cmbType;
+        // Mail source (swapped in/out of SOURCE section)
+        Grid _rowAccount, _rowOutlookFolder;
         ComboBox _cmbAccount, _cmbFolder;
-        CheckBox _chkFlat;
+        // Folder source (swapped in/out of SOURCE section)
+        Grid _rowSourceFolder, _rowRecurse;
+        TextBox _txtSourceFolder;
+        CheckBox _chkRecurse;
+        // SOURCE container
+        StackPanel _sourceContent;
+        // Common
         DatePicker _dpSince;
         RadioButton _rbAnd, _rbOr;
         ListBox _lstFilters;
         TextBox _txtNewFilter;
-        TextBox _txtPath, _txtPollSec;
+        TextBox _txtPath;
+        CheckBox _chkFlat;
+        CheckBox _chkNotify, _chkLog;
+
         List<string> _folderPaths = new List<string>();
         List<string> _currentFilters = new List<string>();
         int _currentIdx = -1;
@@ -51,19 +63,41 @@ namespace MailPull
             btnAdd.Click += OnAddProfile;
             btnRemove.Click += OnRemoveProfile;
 
-            // Fields - order: name, account, folder_path, since, filter, export_root, poll_seconds
+            // Name + Type
             root.Children.Add(FieldRow("Name", _txtName = new TextBox()));
+            _cmbType = new ComboBox { IsEditable = false, Width = 160 };
+            _cmbType.Items.Add("Mail");
+            _cmbType.Items.Add("Folder");
+            _cmbType.SelectionChanged += OnTypeChanged;
+            root.Children.Add(FieldRow("Type", _cmbType));
 
+            // --- SOURCE (single section, content swapped by type) ---
             root.Children.Add(new Separator { Margin = new Thickness(0, 8, 0, 8) });
             root.Children.Add(SectionHeader("SOURCE"));
-            root.Children.Add(FieldRow("Account", _cmbAccount = MkCombo()));
-            root.Children.Add(FieldRow("Outlook folder", _cmbFolder = MkCombo()));
+            _sourceContent = new StackPanel();
+            root.Children.Add(_sourceContent);
 
-            _dpSince = new DatePicker { Width = 140, SelectedDateFormat = DatePickerFormat.Short };
-            root.Children.Add(FieldRow("Since", _dpSince));
+            // Build mail source rows (not added yet)
+            _rowAccount = FieldRow("Account", _cmbAccount = MkCombo());
+            _rowOutlookFolder = FieldRow("Outlook folder", _cmbFolder = MkCombo());
 
+            // Build folder source rows (not added yet)
+            _txtSourceFolder = new TextBox();
+            var btnBrowseSource = new Button { Content = "...", Width = 30, Padding = new Thickness(0, 2, 0, 2) };
+            btnBrowseSource.Click += (s, e) =>
+            {
+                string path = FolderPicker.Show(_txtSourceFolder.Text);
+                if (path != null) _txtSourceFolder.Text = path;
+            };
+            _rowSourceFolder = FieldRow("Source folder", _txtSourceFolder, btnBrowseSource);
+            _chkRecurse = new CheckBox { Content = "Include subfolders", FontSize = 12, IsChecked = true };
+            _rowRecurse = FieldRow("", _chkRecurse);
+
+            // --- FILTER (common) ---
             root.Children.Add(new Separator { Margin = new Thickness(0, 8, 0, 8) });
             root.Children.Add(SectionHeader("FILTER"));
+            _dpSince = new DatePicker { Width = 140, SelectedDateFormat = DatePickerFormat.Short };
+            root.Children.Add(FieldRow("Since", _dpSince));
 
             var modePanel = new StackPanel { Orientation = Orientation.Horizontal };
             _rbOr = new RadioButton { Content = "Any match (OR)", Margin = new Thickness(0, 0, 16, 0) };
@@ -73,7 +107,7 @@ namespace MailPull
             modePanel.Children.Add(_rbAnd);
             root.Children.Add(FieldRow("Match", modePanel));
 
-            _lstFilters = new ListBox { Height = 80, Margin = new Thickness(0, 4, 0, 4) };
+            _lstFilters = new ListBox { Height = 50, Margin = new Thickness(0, 4, 0, 4) };
             var filterAddBar = new DockPanel();
             var btnFilterRemove = new Button { Content = " \u2212 ", Padding = new Thickness(6, 1, 6, 1) };
             var btnFilterAdd = new Button { Content = " + ", Padding = new Thickness(6, 1, 6, 1), Margin = new Thickness(0, 0, 4, 0) };
@@ -86,22 +120,25 @@ namespace MailPull
             filterAddBar.Children.Add(_txtNewFilter);
             btnFilterAdd.Click += (s, e) => AddFilter();
             btnFilterRemove.Click += (s, e) => RemoveFilter();
+            var filterContent = new StackPanel();
+            filterContent.Children.Add(_lstFilters);
+            filterContent.Children.Add(filterAddBar);
+            root.Children.Add(FieldRow("Keywords", filterContent));
 
-            var filterPanel = new StackPanel();
-            filterPanel.Children.Add(_lstFilters);
-            filterPanel.Children.Add(filterAddBar);
-            root.Children.Add(FieldRow("Keywords", filterPanel));
-
+            // --- OUTPUT (common) ---
             root.Children.Add(new Separator { Margin = new Thickness(0, 8, 0, 8) });
             root.Children.Add(SectionHeader("OUTPUT"));
             root.Children.Add(FieldRow("Folder", _txtPath = new TextBox(), MkBrowseBtn()));
             _chkFlat = new CheckBox { Content = "Flat (no folder structure)", FontSize = 12 };
             root.Children.Add(FieldRow("", _chkFlat));
 
+            // --- MONITORING (common) ---
             root.Children.Add(new Separator { Margin = new Thickness(0, 8, 0, 8) });
-            root.Children.Add(SectionHeader("AUTO POLLING"));
-            root.Children.Add(FieldRow("Interval", _txtPollSec = new TextBox { Width = 60 },
-                HintLabel("seconds")));
+            root.Children.Add(SectionHeader("MONITORING"));
+            _chkNotify = new CheckBox { Content = "Show notifications", FontSize = 12, IsChecked = true };
+            _chkLog = new CheckBox { Content = "Write change log", FontSize = 12, IsChecked = true };
+            root.Children.Add(FieldRow("", _chkNotify));
+            root.Children.Add(FieldRow("", _chkLog));
 
             // Bottom buttons
             var btnBar = new DockPanel { Margin = new Thickness(0, 16, 0, 0) };
@@ -111,7 +148,6 @@ namespace MailPull
             DockPanel.SetDock(btnReset, Dock.Left);
             btnBar.Children.Add(btnImport);
             btnBar.Children.Add(btnReset);
-
             var rightBtns = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right };
             var btnSave = new Button { Content = "Save", Width = 80, Padding = new Thickness(0, 6, 0, 6), IsDefault = true };
             var btnCancel = new Button { Content = "Cancel", Width = 80, Padding = new Thickness(0, 6, 0, 6), Margin = new Thickness(8, 0, 0, 0), IsCancel = true };
@@ -133,6 +169,40 @@ namespace MailPull
                 _cmbProfile.SelectedIndex = 0;
 
             Loaded += (s, e) => LoadOutlookData();
+        }
+
+        // --- Type switching: swap source rows ---
+
+        void OnTypeChanged(object sender, SelectionChangedEventArgs e)
+        {
+            if (_loading) return;
+            UpdateSourceContent();
+        }
+
+        void UpdateSourceContent()
+        {
+            _sourceContent.Children.Clear();
+            string type = GetSelectedType();
+            if (type == "mail")
+            {
+                _sourceContent.Children.Add(_rowAccount);
+                _sourceContent.Children.Add(_rowOutlookFolder);
+            }
+            else
+            {
+                _sourceContent.Children.Add(_rowSourceFolder);
+                _sourceContent.Children.Add(_rowRecurse);
+            }
+        }
+
+        string GetSelectedType()
+        {
+            return _cmbType.SelectedIndex == 1 ? "folder" : "mail";
+        }
+
+        void SetTypeCombo(string type)
+        {
+            _cmbType.SelectedIndex = type == "folder" ? 1 : 0;
         }
 
         // --- Layout helpers ---
@@ -180,10 +250,7 @@ namespace MailPull
             return grid;
         }
 
-        ComboBox MkCombo()
-        {
-            return new ComboBox { IsEditable = false };
-        }
+        ComboBox MkCombo() { return new ComboBox { IsEditable = false }; }
 
         Button MkBrowseBtn()
         {
@@ -269,8 +336,10 @@ namespace MailPull
             if (i < 0) { _loading = false; return; }
 
             _txtName.Text = Config.PGet(i, "name");
+            SetTypeCombo(Config.PGet(i, "type", "mail"));
+            UpdateSourceContent();
 
-            // Account
+            // Mail source
             string savedAcct = Config.PGet(i, "account");
             _cmbAccount.SelectedIndex = 0;
             for (int j = 0; j < _cmbAccount.Items.Count; j++)
@@ -278,20 +347,22 @@ namespace MailPull
                     StringComparison.OrdinalIgnoreCase))
                 { _cmbAccount.SelectedIndex = j; break; }
 
-            // Folder
             LoadFolders();
-            string savedFolder = Config.PGet(i, "folder_path");
+            string savedFolder = Config.PGet(i, "outlook_folder");
             if (!string.IsNullOrEmpty(savedFolder))
                 for (int j = 0; j < _folderPaths.Count; j++)
                     if (_folderPaths[j] == savedFolder)
                     { _cmbFolder.SelectedIndex = j; break; }
 
-            // Since
+            // Folder source
+            _txtSourceFolder.Text = Config.PGet(i, "source_folder");
+            _chkRecurse.IsChecked = Config.PGet(i, "recurse", "1") != "0";
+
+            // Common filter
             string sinceStr = Config.PGet(i, "since");
             DateTime dt;
             _dpSince.SelectedDate = DateTime.TryParse(sinceStr, out dt) ? (DateTime?)dt : null;
 
-            // Filter
             string mode = Config.PGet(i, "filter_mode", "or");
             _rbAnd.IsChecked = mode == "and";
             _rbOr.IsChecked = mode != "and";
@@ -300,18 +371,19 @@ namespace MailPull
             _lstFilters.Items.Clear();
             string filtersStr = Config.PGet(i, "filters");
             if (!string.IsNullOrEmpty(filtersStr))
-            {
                 foreach (var f in filtersStr.Split(';'))
                 {
                     string kw = f.Trim();
                     if (kw.Length > 0) { _currentFilters.Add(kw); _lstFilters.Items.Add(kw); }
                 }
-            }
 
-            // Output
-            _txtPath.Text = Config.PGet(i, "export_root");
+            // Common output
+            _txtPath.Text = Config.PGet(i, "output_root");
             _chkFlat.IsChecked = Config.PGet(i, "flat_output") == "1";
-            _txtPollSec.Text = Config.PGet(i, "poll_seconds", "60");
+
+            // Common monitoring
+            _chkNotify.IsChecked = Config.PGet(i, "notify", "1") != "0";
+            _chkLog.IsChecked = Config.PGet(i, "log_enabled", "1") != "0";
 
             _loading = false;
         }
@@ -322,17 +394,31 @@ namespace MailPull
             if (i < 0) return;
 
             Config.PSet(i, "name", _txtName.Text);
+            Config.PSet(i, "type", GetSelectedType());
+
+            // Mail source
             Config.PSet(i, "account",
                 _cmbAccount.SelectedIndex > 0 ? _cmbAccount.SelectedItem.ToString() : "");
-            Config.PSet(i, "folder_path",
+            Config.PSet(i, "outlook_folder",
                 _cmbFolder.SelectedIndex > 0 ? _folderPaths[_cmbFolder.SelectedIndex] : "");
+
+            // Folder source
+            Config.PSet(i, "source_folder", _txtSourceFolder.Text);
+            Config.PSet(i, "recurse", _chkRecurse.IsChecked == true ? "1" : "0");
+
+            // Common filter
             Config.PSet(i, "since",
                 _dpSince.SelectedDate.HasValue ? _dpSince.SelectedDate.Value.ToString("yyyy-MM-dd") : "");
             Config.PSet(i, "filter_mode", _rbAnd.IsChecked == true ? "and" : "or");
             Config.PSet(i, "filters", string.Join(";", _currentFilters.ToArray()));
-            Config.PSet(i, "export_root", _txtPath.Text);
+
+            // Common output
+            Config.PSet(i, "output_root", _txtPath.Text);
             Config.PSet(i, "flat_output", _chkFlat.IsChecked == true ? "1" : "0");
-            Config.PSet(i, "poll_seconds", _txtPollSec.Text);
+
+            // Common monitoring
+            Config.PSet(i, "notify", _chkNotify.IsChecked == true ? "1" : "0");
+            Config.PSet(i, "log_enabled", _chkLog.IsChecked == true ? "1" : "0");
 
             if (_cmbProfile.SelectedIndex == i && _cmbProfile.Items.Count > i)
                 _cmbProfile.Items[i] = _txtName.Text;
@@ -350,8 +436,8 @@ namespace MailPull
                 _cmbAccount.Items.Add("(All)");
                 _cmbAccount.SelectedIndex = 0;
 
-                var exporter = new Exporter();
-                foreach (var a in exporter.GetAccounts()) _cmbAccount.Items.Add(a);
+                var scanner = new MailScanner();
+                foreach (var a in scanner.GetAccounts()) _cmbAccount.Items.Add(a);
 
                 if (_currentIdx >= 0) LoadCurrentProfile();
             }
@@ -369,8 +455,8 @@ namespace MailPull
             _cmbFolder.Items.Add("(All)");
             _folderPaths.Add("");
             string acct = _cmbAccount.SelectedIndex > 0 ? _cmbAccount.SelectedItem.ToString() : "";
-            var exporter = new Exporter();
-            foreach (var f in exporter.GetFolders(acct))
+            var scanner = new MailScanner();
+            foreach (var f in scanner.GetFolders(acct))
             {
                 _cmbFolder.Items.Add(f[0]);
                 _folderPaths.Add(f[1]);
@@ -385,7 +471,7 @@ namespace MailPull
             SaveCurrentProfile();
             for (int i = 0; i < Config.ProfileCount; i++)
             {
-                if (string.IsNullOrWhiteSpace(Config.PGet(i, "export_root")))
+                if (string.IsNullOrWhiteSpace(Config.PGet(i, "output_root")))
                 {
                     MessageBox.Show(string.Format("Profile \"{0}\" needs an output folder.",
                         Config.PGet(i, "name", "Profile " + (i + 1))));
@@ -430,20 +516,20 @@ namespace MailPull
                     string line = lines[row].Trim();
                     if (string.IsNullOrEmpty(line)) continue;
                     var cols = line.Split(',');
-                    // Skip header row
                     if (cols[0].Trim().ToLower() == "name") continue;
                     if (cols.Length < 1) continue;
 
-                    // CSV: name,account,folder_path,since,filter_mode,filters,export_root,flat_output,poll_seconds
                     int idx = Config.AddProfile(ColVal(cols, 0, "Imported " + (added + 1)));
-                    Config.PSet(idx, "account", ColVal(cols, 1, ""));
-                    Config.PSet(idx, "folder_path", ColVal(cols, 2, ""));
-                    Config.PSet(idx, "since", ColVal(cols, 3, ""));
-                    Config.PSet(idx, "filter_mode", ColVal(cols, 4, "or"));
-                    Config.PSet(idx, "filters", ColVal(cols, 5, ""));
-                    Config.PSet(idx, "export_root", ColVal(cols, 6, ""));
-                    Config.PSet(idx, "flat_output", ColVal(cols, 7, "0"));
-                    Config.PSet(idx, "poll_seconds", ColVal(cols, 8, "60"));
+                    Config.PSet(idx, "type", ColVal(cols, 1, "mail"));
+                    Config.PSet(idx, "output_root", ColVal(cols, 2, ""));
+                    Config.PSet(idx, "account", ColVal(cols, 3, ""));
+                    Config.PSet(idx, "outlook_folder", ColVal(cols, 4, ""));
+                    Config.PSet(idx, "source_folder", ColVal(cols, 5, ""));
+                    Config.PSet(idx, "since", "");
+                    Config.PSet(idx, "filter_mode", "or");
+                    Config.PSet(idx, "filters", "");
+                    Config.PSet(idx, "flat_output", "0");
+                    Config.PSet(idx, "recurse", "1");
                     added++;
                 }
 

@@ -3,18 +3,15 @@ using System.Collections.Generic;
 using System.IO;
 using System.Text;
 
-namespace MailPull
+namespace WatchBox
 {
-    public class Exporter
+    public class MailScanner : SourceScanner
     {
         const int OL_MSG_UNICODE = 9;
         const int OL_MAIL_CLASS = 43;
 
         dynamic _olApp;
         dynamic _olNs;
-
-        public event Action<int, string> ProgressChanged;
-        public volatile bool CancelRequested;
         HashSet<string> _exported;
         int _itemCount;
         string _filterMode;
@@ -36,7 +33,7 @@ namespace MailPull
             catch { return false; }
         }
 
-        // --- Accounts / Folders ---
+        // --- Accounts / Folders (used by SettingsForm) ---
 
         public List<string> GetAccounts()
         {
@@ -126,45 +123,44 @@ namespace MailPull
             catch { }
         }
 
-        // --- Export ---
+        // --- SourceScanner implementation ---
 
-        public int Export(string exportRoot, string sinceDate, string filterAccount, string filterFolder,
-            string filterMode = "", string filterKeywords = "", bool flatOutput = false)
+        public override List<ScanResult> Scan(
+            Dictionary<string, string> config, HashSet<string> knownIds)
         {
-            if (!Connect() || string.IsNullOrEmpty(exportRoot)) return 0;
-            Directory.CreateDirectory(exportRoot);
+            var results = new List<ScanResult>();
+            string outputRoot = config.ContainsKey("output_root") ? config["output_root"] : "";
+            if (!Connect() || string.IsNullOrEmpty(outputRoot)) return results;
+            Directory.CreateDirectory(outputRoot);
 
-            // Parse keyword filters
-            _flatOutput = flatOutput;
+            string filterAccount = config.ContainsKey("account") ? config["account"] : "";
+            string filterFolder = config.ContainsKey("outlook_folder") ? config["outlook_folder"] : "";
+            string sinceDate = config.ContainsKey("since") ? config["since"] : "";
+            string filterMode = config.ContainsKey("filter_mode") ? config["filter_mode"] : "";
+            string filterKeywords = config.ContainsKey("filters") ? config["filters"] : "";
+            _flatOutput = config.ContainsKey("flat_output") && config["flat_output"] == "1";
+
             _filterMode = (filterMode ?? "").ToLower() == "and" ? "and" : "or";
             _filterWords = new List<string>();
             if (!string.IsNullOrEmpty(filterKeywords))
                 foreach (var kw in filterKeywords.Split(';'))
                     if (kw.Trim().Length > 0) _filterWords.Add(kw.Trim().ToLower());
 
-            // Pre-load exported EntryIDs from manifest (skip without COM calls)
-            var exported = new HashSet<string>();
-            string manifestPath = Path.Combine(exportRoot, "manifest.csv");
-            if (File.Exists(manifestPath))
-            {
-                foreach (var line in File.ReadAllLines(manifestPath, Encoding.UTF8))
-                {
-                    if (string.IsNullOrEmpty(line)) continue;
-                    int sep = line.IndexOf(',');
-                    exported.Add(sep > 0 ? line.Substring(0, sep) : line);
-                }
-            }
-            _exported = exported;
+            _exported = new HashSet<string>(knownIds);
 
             string filter = null;
-            if (!string.IsNullOrEmpty(sinceDate))
+            DateTime dt;
+            if (!string.IsNullOrEmpty(sinceDate) && DateTime.TryParse(sinceDate, out dt))
+                filter = string.Format("[ReceivedTime]>='{0:yyyy/MM/dd}'", dt);
+            else if (knownIds.Count > 0)
             {
-                DateTime dt;
-                if (DateTime.TryParse(sinceDate, out dt))
-                    filter = string.Format("[ReceivedTime]>='{0:yyyy/MM/dd}'", dt);
+                // Already have data: use latest date from manifest to narrow scan
+                DateTime latest = ManifestIO.GetLatestMailDate(outputRoot);
+                if (latest > DateTime.MinValue)
+                    filter = string.Format("[ReceivedTime]>='{0:yyyy/MM/dd}'",
+                        latest.AddDays(-1));
             }
 
-            int total = 0;
             foreach (dynamic store in _olNs.Stores)
             {
                 if (CancelRequested) break;
@@ -179,14 +175,130 @@ namespace MailPull
                     {
                         dynamic startFolder = FindFolder(store.GetRootFolder(), filterFolder);
                         if (startFolder != null)
-                            total += ExportTree(startFolder, exportRoot, smtp, filter);
+                            ScanTree(startFolder, outputRoot, smtp, filter, results);
                     }
                     else
-                        total += ExportTree(store.GetRootFolder(), exportRoot, smtp, filter);
+                        ScanTree(store.GetRootFolder(), outputRoot, smtp, filter, results);
                 }
                 catch { }
             }
-            return total;
+            return results;
+        }
+
+        public override List<string> DetectRemoved(
+            Dictionary<string, string> config, HashSet<string> knownIds)
+        {
+            // Mail items are append-only; removal detection is expensive and skipped for now
+            return new List<string>();
+        }
+
+        // --- Internal tree scan ---
+
+        void ScanTree(dynamic folder, string outputRoot, string smtp, string filter,
+            List<ScanResult> results)
+        {
+            try
+            {
+                string folderRoot;
+                if (_flatOutput)
+                    folderRoot = outputRoot;
+                else
+                    folderRoot = Path.Combine(outputRoot,
+                        SafeName(smtp) + NormalizeFolderPath((string)folder.FolderPath));
+                Directory.CreateDirectory(folderRoot);
+
+                dynamic items = folder.Items;
+                if (filter != null) items = items.Restrict(filter);
+
+                dynamic item = items.GetFirst();
+                while (item != null)
+                {
+                    try
+                    {
+                        if ((int)item.Class == OL_MAIL_CLASS)
+                        {
+                            string eid = (string)item.EntryID;
+                            if (!_exported.Contains(eid))
+                            {
+                                if (_filterWords.Count > 0 && !MatchesFilter(item))
+                                    goto SkipItem;
+
+                                // Export files immediately (msg, body, meta, attachments)
+                                var sr = ExportAndBuildResult(item, folderRoot, outputRoot, smtp);
+                                if (sr != null)
+                                {
+                                    results.Add(sr);
+                                    _exported.Add(eid);
+                                    OnProgress(results.Count, sr.Subject);
+                                }
+                                SkipItem:;
+                            }
+                        }
+                    }
+                    catch { }
+                    if (CancelRequested) break;
+                    _itemCount++;
+                    if (_itemCount % 10 == 0) System.Threading.Thread.Sleep(1);
+                    try { item = items.GetNext(); } catch { break; }
+                }
+
+                if (!CancelRequested)
+                    foreach (dynamic child in folder.Folders)
+                    {
+                        if (CancelRequested) break;
+                        ScanTree(child, outputRoot, smtp, filter, results);
+                    }
+            }
+            catch { }
+        }
+
+        ScanResult ExportAndBuildResult(dynamic mail, string folderRoot, string exportRoot, string smtp)
+        {
+            try
+            {
+                string mailDir = Path.Combine(folderRoot, BuildMailDirName(mail));
+                if (File.Exists(Path.Combine(mailDir, "meta.json"))) return null;
+
+                Directory.CreateDirectory(mailDir);
+                mail.SaveAs(Path.Combine(mailDir, "mail.msg"), OL_MSG_UNICODE);
+                string bodyText = (string)mail.Body ?? "";
+                File.WriteAllText(Path.Combine(mailDir, "body.txt"), bodyText, Encoding.UTF8);
+
+                var attNames = SaveAttachments(mail, mailDir);
+                WriteMetaJson(Path.Combine(mailDir, "meta.json"), mail, attNames, smtp);
+
+                string senderAddr = "";
+                try { senderAddr = (string)mail.SenderEmailAddress; } catch { }
+
+                string bodyFlat = bodyText.Replace(",", " ").Replace("\r", " ").Replace("\n", " ");
+                if (bodyFlat.Length > 2000) bodyFlat = bodyFlat.Substring(0, 2000);
+
+                return new ScanResult {
+                    ItemId = (string)mail.EntryID,
+                    Name = (string)mail.Subject,
+                    SourcePath = (string)mail.Parent.FolderPath,
+                    SenderEmail = senderAddr,
+                    SenderName = (string)mail.SenderName,
+                    Subject = (string)mail.Subject,
+                    ReceivedAt = (DateTime)mail.ReceivedTime,
+                    BodyText = bodyFlat,
+                    BodyPath = Path.Combine(mailDir, "body.txt"),
+                    MsgPath = Path.Combine(mailDir, "mail.msg"),
+                    AttachmentPaths = BuildAttachPaths(attNames, mailDir),
+                    AttachmentNames = attNames,
+                    ItemFolder = mailDir
+                };
+            }
+            catch { return null; }
+        }
+
+        // --- Helpers ---
+
+        static string BuildAttachPaths(List<string> names, string dir)
+        {
+            var paths = new List<string>();
+            foreach (var n in names) paths.Add(Path.Combine(dir, n));
+            return string.Join("|", paths.ToArray());
         }
 
         dynamic FindFolder(dynamic root, string targetPath)
@@ -202,79 +314,6 @@ namespace MailPull
             }
             catch { }
             return null;
-        }
-
-        int ExportTree(dynamic folder, string exportRoot, string smtp, string filter)
-        {
-            int total = 0;
-            try
-            {
-                string folderRoot;
-                if (_flatOutput)
-                    folderRoot = exportRoot;
-                else
-                    folderRoot = Path.Combine(exportRoot,
-                        SafeName(smtp) + NormalizeFolderPath((string)folder.FolderPath));
-                Directory.CreateDirectory(folderRoot);
-
-                dynamic items = folder.Items;
-                if (filter != null) items = items.Restrict(filter);
-
-                dynamic item = items.GetFirst();
-                while (item != null)
-                {
-                    try
-                    {
-                        if ((int)item.Class == OL_MAIL_CLASS)
-                        {
-                            // Fast skip: check EntryID against manifest (O(1), one COM call)
-                            string eid = (string)item.EntryID;
-                            if (!_exported.Contains(eid))
-                            {
-                                // Keyword filter check
-                                if (_filterWords.Count > 0 && !MatchesFilter(item))
-                                    goto SkipItem;
-
-                                ExportMail(item, folderRoot, exportRoot, smtp);
-                                _exported.Add(eid);
-                                total++;
-                                if (ProgressChanged != null)
-                                    ProgressChanged(total, (string)item.Subject);
-                            }
-                            SkipItem:;
-                        }
-                    }
-                    catch { }
-                    if (CancelRequested) break;
-                    // Yield every 10 items to reduce Outlook freezing
-                    _itemCount++;
-                    if (_itemCount % 10 == 0) System.Threading.Thread.Sleep(1);
-                    try { item = items.GetNext(); } catch { break; }
-                }
-
-                if (!CancelRequested)
-                    foreach (dynamic child in folder.Folders)
-                    {
-                        if (CancelRequested) break;
-                        total += ExportTree(child, exportRoot, smtp, filter);
-                    }
-            }
-            catch { }
-            return total;
-        }
-
-        void ExportMail(dynamic mail, string folderRoot, string exportRoot, string smtp)
-        {
-            string mailDir = Path.Combine(folderRoot, BuildMailDirName(mail));
-            if (File.Exists(Path.Combine(mailDir, "meta.json"))) return;
-
-            Directory.CreateDirectory(mailDir);
-            mail.SaveAs(Path.Combine(mailDir, "mail.msg"), OL_MSG_UNICODE);
-            File.WriteAllText(Path.Combine(mailDir, "body.txt"), (string)mail.Body, Encoding.UTF8);
-
-            var attNames = SaveAttachments(mail, mailDir);
-            WriteMetaJson(Path.Combine(mailDir, "meta.json"), mail, attNames, smtp);
-            AppendManifest(exportRoot, mail, mailDir, attNames);
         }
 
         List<string> SaveAttachments(dynamic mail, string mailDir)
@@ -326,55 +365,15 @@ namespace MailPull
             File.WriteAllText(path, json, Encoding.UTF8);
         }
 
-        void AppendManifest(string exportRoot, dynamic mail, string mailDir, List<string> attNames)
-        {
-            try
-            {
-                string senderAddr = "";
-                try { senderAddr = (string)mail.SenderEmailAddress; } catch { }
-
-                // Flatten body to single line for CSV search
-                string bodyText = "";
-                try { bodyText = ((string)mail.Body ?? "").Replace(",", " ").Replace("\r", " ").Replace("\n", " "); }
-                catch { }
-                // Truncate to keep CSV manageable
-                if (bodyText.Length > 2000) bodyText = bodyText.Substring(0, 2000);
-
-                string line = string.Join(",", new[] {
-                    (string)mail.EntryID, senderAddr, (string)mail.SenderName,
-                    ((string)mail.Subject).Replace(",", " ").Replace("\n", " "),
-                    ((DateTime)mail.ReceivedTime).ToString("yyyy-MM-dd\\THH:mm:ss"),
-                    (string)mail.Parent.FolderPath,
-                    Path.Combine(mailDir, "body.txt"), Path.Combine(mailDir, "mail.msg"),
-                    string.Join("|", attNames.ConvertAll(a => Path.Combine(mailDir, a)).ToArray()),
-                    mailDir,
-                    bodyText
-                });
-
-                var csvPath = Path.Combine(exportRoot, "manifest.csv");
-                // BOM on first write so Excel opens correctly
-                if (!File.Exists(csvPath))
-                    File.WriteAllText(csvPath,
-                        "entry_id,sender_email,sender_name,subject,received_at,folder_path,body_path,msg_path,attachment_paths,mail_folder,body_text"
-                        + Environment.NewLine, new UTF8Encoding(true));
-                File.AppendAllText(csvPath, line + Environment.NewLine, new UTF8Encoding(true));
-            }
-            catch { }
-        }
-
-        // --- Keyword filter ---
-
         bool MatchesFilter(dynamic mail)
         {
             if (_filterWords.Count == 0) return true;
-
             string subject = ""; string body = ""; string sender = "";
             try { subject = ((string)mail.Subject ?? "").ToLower(); } catch { }
             try { body = ((string)mail.Body ?? "").ToLower(); } catch { }
             try { sender = ((string)mail.SenderEmailAddress ?? "").ToLower(); } catch { }
 
             string text = subject + "\n" + body + "\n" + sender;
-
             if (_filterMode == "and")
             {
                 foreach (var kw in _filterWords)
@@ -388,46 +387,6 @@ namespace MailPull
                 return false;
             }
         }
-
-        // --- Search manifest ---
-
-        // Search manifest.csv by subject, sender_email, sender_name, attachment filenames.
-        // CSV columns: 0=entry_id 1=sender_email 2=sender_name 3=subject 4=received_at
-        //   5=folder_path 6=body_path 7=msg_path 8=attachment_paths 9=mail_folder
-        public static List<string[]> SearchManifest(string query)
-        {
-            var results = new List<string[]>();
-            string root = Config.Get("export_root");
-            if (string.IsNullOrEmpty(root)) return results;
-            string path = Path.Combine(root, "manifest.csv");
-            if (!File.Exists(path)) return results;
-
-            string q = (query ?? "").Trim().ToLower();
-            if (q.Length == 0) return results;
-
-            foreach (var line in File.ReadAllLines(path, Encoding.UTF8))
-            {
-                if (string.IsNullOrEmpty(line)) continue;
-                var cols = line.Split(',');
-                if (cols.Length < 4) continue;
-                // skip header
-                if (cols[0] == "entry_id") continue;
-
-                string email   = cols.Length > 1 ? cols[1].ToLower() : "";
-                string name    = cols.Length > 2 ? cols[2].ToLower() : "";
-                string subject = cols.Length > 3 ? cols[3].ToLower() : "";
-                string attach  = cols.Length > 8 ? cols[8].ToLower() : "";
-                string body    = cols.Length > 10 ? cols[10].ToLower() : "";
-
-                if (subject.Contains(q) || email.Contains(q)
-                    || name.Contains(q) || attach.Contains(q)
-                    || body.Contains(q))
-                    results.Add(cols);
-            }
-            return results;
-        }
-
-        // --- Helpers ---
 
         string GetStoreSmtp(dynamic store)
         {

@@ -1,4 +1,4 @@
-# mailpull.ps1 - Outlook mail archive and search tool
+# watchbox.ps1 - Unified monitoring and manifest generation tool
 $ErrorActionPreference = 'Stop'
 
 Add-Type -AssemblyName PresentationFramework
@@ -25,4 +25,4 @@ $refs = @(
 )
 
 Add-Type -TypeDefinition $source -ReferencedAssemblies $refs
-[MailPull.App]::Run($PSScriptRoot)
+[WatchBox.App]::Run($PSScriptRoot)

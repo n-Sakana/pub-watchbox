@@ -7,10 +7,11 @@
 - All source files must be ASCII / English only (no Japanese in code or comments)
 
 ## Architecture
-- WinForms app (no Excel dependency)
-- launch.bat > mailpull.ps1 > C# compile > App.Run()
+- WPF app (no Excel dependency)
+- launch.bat > watchbox.ps1 > C# compile > App.Run()
 - Config stored in config.json (app directory)
+- Profile types: mail (Outlook export), folder (with source_folder = file sync, without = manifest-only)
 
 ## Run
 - Start: double-click `launch.bat`
-- Dev: `powershell -ExecutionPolicy Bypass -File mailpull.ps1`
+- Dev: `powershell -ExecutionPolicy Bypass -File watchbox.ps1`
