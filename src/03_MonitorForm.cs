@@ -147,7 +147,8 @@ namespace MailPull
                         }));
                     total += ex.Export(root, Config.PGet(i, "since"),
                         Config.PGet(i, "account"), Config.PGet(i, "folder_path"),
-                        Config.PGet(i, "filter_mode"), Config.PGet(i, "filters"));
+                        Config.PGet(i, "filter_mode"), Config.PGet(i, "filters"),
+                        Config.PGet(i, "flat_output") == "1");
                     if (ex.CancelRequested) break;
                 }
                 return total;
@@ -235,7 +236,8 @@ namespace MailPull
                     var ex = new Exporter();
                     total += ex.Export(root, Config.PGet(i, "since"),
                         Config.PGet(i, "account"), Config.PGet(i, "folder_path"),
-                        Config.PGet(i, "filter_mode"), Config.PGet(i, "filters"));
+                        Config.PGet(i, "filter_mode"), Config.PGet(i, "filters"),
+                        Config.PGet(i, "flat_output") == "1");
                 }
                 return total;
             },

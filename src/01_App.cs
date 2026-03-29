@@ -65,7 +65,7 @@ namespace MailPull
 
         // --- Profile support ---
         // Keys: p0_name, p0_account, p0_folder_path, p0_since, p0_filter_mode, p0_filters, p0_export_root, p0_poll_seconds
-        static readonly string[] ProfileKeys = { "name", "account", "folder_path", "since", "filter_mode", "filters", "export_root", "poll_seconds" };
+        static readonly string[] ProfileKeys = { "name", "account", "folder_path", "since", "filter_mode", "filters", "export_root", "flat_output", "poll_seconds" };
 
         public static int ProfileCount
         {

@@ -244,6 +244,8 @@ namespace MailPull
             var style = new Style(typeof(GridViewColumnHeader));
             style.Setters.Add(new Setter(GridViewColumnHeader.HorizontalContentAlignmentProperty,
                 HorizontalAlignment.Left));
+            style.Setters.Add(new Setter(GridViewColumnHeader.BorderThicknessProperty,
+                new Thickness(0)));
             return style;
         }
 

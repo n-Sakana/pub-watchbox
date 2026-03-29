@@ -12,6 +12,7 @@ namespace MailPull
         ComboBox _cmbProfile;
         TextBox _txtName;
         ComboBox _cmbAccount, _cmbFolder;
+        CheckBox _chkFlat;
         DatePicker _dpSince;
         RadioButton _rbAnd, _rbOr;
         ListBox _lstFilters;
@@ -94,6 +95,8 @@ namespace MailPull
             root.Children.Add(new Separator { Margin = new Thickness(0, 8, 0, 8) });
             root.Children.Add(SectionHeader("OUTPUT"));
             root.Children.Add(FieldRow("Folder", _txtPath = new TextBox(), MkBrowseBtn()));
+            _chkFlat = new CheckBox { Content = "Flat (no folder structure)", FontSize = 12 };
+            root.Children.Add(FieldRow("", _chkFlat));
 
             root.Children.Add(new Separator { Margin = new Thickness(0, 8, 0, 8) });
             root.Children.Add(SectionHeader("AUTO POLLING"));
@@ -307,6 +310,7 @@ namespace MailPull
 
             // Output
             _txtPath.Text = Config.PGet(i, "export_root");
+            _chkFlat.IsChecked = Config.PGet(i, "flat_output") == "1";
             _txtPollSec.Text = Config.PGet(i, "poll_seconds", "60");
 
             _loading = false;
@@ -327,6 +331,7 @@ namespace MailPull
             Config.PSet(i, "filter_mode", _rbAnd.IsChecked == true ? "and" : "or");
             Config.PSet(i, "filters", string.Join(";", _currentFilters.ToArray()));
             Config.PSet(i, "export_root", _txtPath.Text);
+            Config.PSet(i, "flat_output", _chkFlat.IsChecked == true ? "1" : "0");
             Config.PSet(i, "poll_seconds", _txtPollSec.Text);
 
             if (_cmbProfile.SelectedIndex == i && _cmbProfile.Items.Count > i)
@@ -429,7 +434,7 @@ namespace MailPull
                     if (cols[0].Trim().ToLower() == "name") continue;
                     if (cols.Length < 1) continue;
 
-                    // CSV columns: name,account,folder_path,since,filter_mode,filters,export_root,poll_seconds
+                    // CSV: name,account,folder_path,since,filter_mode,filters,export_root,flat_output,poll_seconds
                     int idx = Config.AddProfile(ColVal(cols, 0, "Imported " + (added + 1)));
                     Config.PSet(idx, "account", ColVal(cols, 1, ""));
                     Config.PSet(idx, "folder_path", ColVal(cols, 2, ""));
@@ -437,7 +442,8 @@ namespace MailPull
                     Config.PSet(idx, "filter_mode", ColVal(cols, 4, "or"));
                     Config.PSet(idx, "filters", ColVal(cols, 5, ""));
                     Config.PSet(idx, "export_root", ColVal(cols, 6, ""));
-                    Config.PSet(idx, "poll_seconds", ColVal(cols, 7, "60"));
+                    Config.PSet(idx, "flat_output", ColVal(cols, 7, "0"));
+                    Config.PSet(idx, "poll_seconds", ColVal(cols, 8, "60"));
                     added++;
                 }
 

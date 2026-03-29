@@ -19,6 +19,7 @@ namespace MailPull
         int _itemCount;
         string _filterMode;
         List<string> _filterWords;
+        bool _flatOutput;
 
         // --- Outlook connection ---
 
@@ -128,12 +129,13 @@ namespace MailPull
         // --- Export ---
 
         public int Export(string exportRoot, string sinceDate, string filterAccount, string filterFolder,
-            string filterMode = "", string filterKeywords = "")
+            string filterMode = "", string filterKeywords = "", bool flatOutput = false)
         {
             if (!Connect() || string.IsNullOrEmpty(exportRoot)) return 0;
             Directory.CreateDirectory(exportRoot);
 
             // Parse keyword filters
+            _flatOutput = flatOutput;
             _filterMode = (filterMode ?? "").ToLower() == "and" ? "and" : "or";
             _filterWords = new List<string>();
             if (!string.IsNullOrEmpty(filterKeywords))
@@ -207,8 +209,12 @@ namespace MailPull
             int total = 0;
             try
             {
-                string folderRoot = Path.Combine(exportRoot,
-                    SafeName(smtp) + NormalizeFolderPath((string)folder.FolderPath));
+                string folderRoot;
+                if (_flatOutput)
+                    folderRoot = exportRoot;
+                else
+                    folderRoot = Path.Combine(exportRoot,
+                        SafeName(smtp) + NormalizeFolderPath((string)folder.FolderPath));
                 Directory.CreateDirectory(folderRoot);
 
                 dynamic items = folder.Items;
