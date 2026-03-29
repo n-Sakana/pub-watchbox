@@ -108,7 +108,7 @@ namespace MailPull
 
             // -- Main 3-pane --
             var mainGrid = new Grid();
-            mainGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(160), MinWidth = 100 });
+            mainGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(220), MinWidth = 140 });
             mainGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
             mainGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(300), MinWidth = 180 });
             mainGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
@@ -121,6 +121,7 @@ namespace MailPull
                 Background = new SolidColorBrush(Color.FromRgb(252, 252, 252)),
                 FontSize = 12
             };
+            ScrollViewer.SetHorizontalScrollBarVisibility(_treeView, ScrollBarVisibility.Auto);
             _treeView.SelectedItemChanged += OnFolderSelected;
             Grid.SetColumn(_treeView, 0);
             mainGrid.Children.Add(_treeView);
