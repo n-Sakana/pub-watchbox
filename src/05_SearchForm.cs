@@ -11,6 +11,7 @@ namespace MailPull
 {
     public class SearchWindow : Window
     {
+        ComboBox _cmbProfile;
         TreeView _treeView;
         ListView _mailList;
         TextBlock _headerBlock;
@@ -20,11 +21,11 @@ namespace MailPull
         UIElement _placeholder;
         TextBlock _statusText;
 
-        // All records from manifest.csv (loaded once)
-        // cols: 0=entry_id 1=sender_email 2=sender_name 3=subject 4=received_at
-        //   5=folder_path 6=body_path 7=msg_path 8=attachment_paths 9=mail_folder 10=body_text
-        List<string[]> _allRecords = new List<string[]>();
-        // Currently visible (after folder + search filter)
+        // Records per profile index
+        Dictionary<int, List<string[]>> _profileRecords = new Dictionary<int, List<string[]>>();
+        // Active records (filtered by selected profile)
+        List<string[]> _activeRecords = new List<string[]>();
+        // Currently displayed (after folder + search filter)
         List<string[]> _currentRecords = new List<string[]>();
         string _selectedFolder = "";
 
@@ -114,7 +115,13 @@ namespace MailPull
             mainGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
             mainGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star), MinWidth = 200 });
 
-            // Left: folder tree (root folders only)
+            // Left: profile combo + folder tree
+            var leftPanel = new DockPanel();
+            _cmbProfile = new ComboBox { Margin = new Thickness(4), FontSize = 12 };
+            _cmbProfile.SelectionChanged += OnProfileChanged;
+            DockPanel.SetDock(_cmbProfile, Dock.Top);
+            leftPanel.Children.Add(_cmbProfile);
+
             _treeView = new TreeView
             {
                 BorderThickness = new Thickness(0),
@@ -123,11 +130,13 @@ namespace MailPull
             };
             ScrollViewer.SetHorizontalScrollBarVisibility(_treeView, ScrollBarVisibility.Auto);
             _treeView.SelectedItemChanged += OnFolderSelected;
-            Grid.SetColumn(_treeView, 0);
-            mainGrid.Children.Add(_treeView);
+            leftPanel.Children.Add(_treeView);
 
-            Grid.SetColumn(MkVSplitter(), 1);
-            mainGrid.Children.Add(MkVSplitter());
+            Grid.SetColumn(leftPanel, 0);
+            mainGrid.Children.Add(leftPanel);
+
+            mainGrid.Children.Add(MkVSplitter(1));
+            mainGrid.Children.Add(MkVSplitter(3));
 
             // Center: mail list
             _mailList = new ListView { BorderThickness = new Thickness(0) };
@@ -153,9 +162,6 @@ namespace MailPull
             };
             Grid.SetColumn(_mailList, 2);
             mainGrid.Children.Add(_mailList);
-
-            Grid.SetColumn(MkVSplitter(), 3);
-            mainGrid.Children.Add(MkVSplitter());
 
             // Right: header+body (top) + attachments (bottom)
             var rightGrid = new Grid();
@@ -195,14 +201,15 @@ namespace MailPull
             rightGrid.Children.Add(hSplitter);
 
             var attachPanel = new DockPanel();
-            attachPanel.Children.Add(new TextBlock
+            var attachHdr = new TextBlock
             {
                 Text = " Attachments", FontSize = 11,
                 Padding = new Thickness(12, 4, 0, 4),
                 Foreground = new SolidColorBrush(Color.FromRgb(100, 100, 100)),
                 Background = new SolidColorBrush(Color.FromRgb(248, 248, 248))
-            });
-            DockPanel.SetDock((UIElement)attachPanel.Children[0], Dock.Top);
+            };
+            DockPanel.SetDock(attachHdr, Dock.Top);
+            attachPanel.Children.Add(attachHdr);
             _attachList = new ListBox { BorderThickness = new Thickness(0), Background = Brushes.White };
             _attachList.MouseDoubleClick += OnAttachDoubleClick;
             attachPanel.Children.Add(_attachList);
@@ -218,14 +225,18 @@ namespace MailPull
             Loaded += (s, e) => LoadData();
         }
 
-        static GridSplitter MkVSplitter()
+        // --- Helpers ---
+
+        GridSplitter MkVSplitter(int col)
         {
-            return new GridSplitter
+            var sp = new GridSplitter
             {
                 Width = 4, HorizontalAlignment = HorizontalAlignment.Center,
                 VerticalAlignment = VerticalAlignment.Stretch,
                 Background = new SolidColorBrush(Color.FromRgb(230, 230, 230))
             };
+            Grid.SetColumn(sp, col);
+            return sp;
         }
 
         static Style LeftAlignStyle()
@@ -236,77 +247,109 @@ namespace MailPull
             return style;
         }
 
-        // --- Load manifest.csv from all profiles + build folder tree ---
+        // --- Load all profiles' manifest data ---
 
         void LoadData()
         {
-            _allRecords.Clear();
-            _treeView.Items.Clear();
+            _profileRecords.Clear();
+            _cmbProfile.Items.Clear();
+            _cmbProfile.Items.Add("(All)");
 
-            // Load records from all profiles
-            var folders = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            var seenIds = new HashSet<string>();
             for (int p = 0; p < Config.ProfileCount; p++)
             {
+                _cmbProfile.Items.Add(Config.PGet(p, "name", "Profile " + (p + 1)));
+                var records = new List<string[]>();
                 string root = Config.PGet(p, "export_root");
-                if (string.IsNullOrEmpty(root)) continue;
-                string csvPath = Path.Combine(root, "manifest.csv");
-                if (!File.Exists(csvPath)) continue;
-
-                foreach (var line in File.ReadAllLines(csvPath, System.Text.Encoding.UTF8))
+                if (!string.IsNullOrEmpty(root))
                 {
-                    if (string.IsNullOrEmpty(line)) continue;
-                    var cols = line.Split(',');
-                    if (cols.Length < 6 || cols[0] == "entry_id") continue;
-                    // Deduplicate by entry_id
-                    if (seenIds.Contains(cols[0])) continue;
-                    seenIds.Add(cols[0]);
-                    _allRecords.Add(cols);
-                    folders.Add(cols[5]);
+                    string csvPath = Path.Combine(root, "manifest.csv");
+                    if (File.Exists(csvPath))
+                        foreach (var line in File.ReadAllLines(csvPath, System.Text.Encoding.UTF8))
+                        {
+                            if (string.IsNullOrEmpty(line)) continue;
+                            var cols = line.Split(',');
+                            if (cols.Length < 6 || cols[0] == "entry_id") continue;
+                            records.Add(cols);
+                        }
                 }
+                _profileRecords[p] = records;
             }
 
-            // Build folder tree from Outlook folder paths
-            // Paths look like: \\account@mail.com\Inbox or \\account\Sent Items\2026
-            var treeNodes = new Dictionary<string, TreeViewItem>(StringComparer.OrdinalIgnoreCase);
-            var sortedFolders = new List<string>(folders);
-            sortedFolders.Sort(StringComparer.OrdinalIgnoreCase);
+            _cmbProfile.SelectedIndex = 0;
+        }
 
-            foreach (var fp in sortedFolders)
+        // --- Profile selection ---
+
+        void OnProfileChanged(object sender, SelectionChangedEventArgs e)
+        {
+            if (_cmbProfile.SelectedIndex < 0) return;
+            _selectedFolder = "";
+            RebuildActive();
+            RebuildTree();
+            ApplyFilter();
+        }
+
+        void RebuildActive()
+        {
+            _activeRecords.Clear();
+            int sel = _cmbProfile.SelectedIndex - 1; // -1 = all
+            var seenIds = new HashSet<string>();
+
+            if (sel < 0)
+            {
+                foreach (var kv in _profileRecords)
+                    foreach (var r in kv.Value)
+                    {
+                        if (seenIds.Contains(r[0])) continue;
+                        seenIds.Add(r[0]);
+                        _activeRecords.Add(r);
+                    }
+            }
+            else
+            {
+                List<string[]> recs;
+                if (_profileRecords.TryGetValue(sel, out recs))
+                    _activeRecords.AddRange(recs);
+            }
+        }
+
+        void RebuildTree()
+        {
+            _treeView.Items.Clear();
+            var folders = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var r in _activeRecords)
+                if (r.Length > 5) folders.Add(r[5]);
+
+            var nodes = new Dictionary<string, TreeViewItem>(StringComparer.OrdinalIgnoreCase);
+            var sorted = new List<string>(folders);
+            sorted.Sort(StringComparer.OrdinalIgnoreCase);
+
+            foreach (var fp in sorted)
             {
                 var parts = new List<string>();
                 foreach (var p in fp.Split('\\'))
                     if (p.Length > 0) parts.Add(p);
                 if (parts.Count == 0) continue;
 
-                string cumulative = "";
-                TreeViewItem parentItem = null;
+                string cum = "";
+                TreeViewItem parent = null;
                 for (int i = 0; i < parts.Count; i++)
                 {
-                    cumulative += "\\" + parts[i];
+                    cum += "\\" + parts[i];
                     TreeViewItem existing;
-                    if (treeNodes.TryGetValue(cumulative, out existing))
-                    {
-                        parentItem = existing;
-                        continue;
-                    }
+                    if (nodes.TryGetValue(cum, out existing)) { parent = existing; continue; }
                     var node = new TreeViewItem
                     {
-                        Header = parts[i],
-                        Tag = cumulative,
+                        Header = parts[i], Tag = cum,
                         IsExpanded = i == 0,
                         FontWeight = i == 0 ? FontWeights.SemiBold : FontWeights.Normal
                     };
-                    treeNodes[cumulative] = node;
-                    if (parentItem != null)
-                        parentItem.Items.Add(node);
-                    else
-                        _treeView.Items.Add(node);
-                    parentItem = node;
+                    nodes[cum] = node;
+                    if (parent != null) parent.Items.Add(node);
+                    else _treeView.Items.Add(node);
+                    parent = node;
                 }
             }
-
-            _statusText.Text = string.Format("{0} mail(s) loaded", _allRecords.Count);
         }
 
         // --- Folder selected ---
@@ -319,7 +362,7 @@ namespace MailPull
             ApplyFilter();
         }
 
-        // --- Filter: folder + search query ---
+        // --- Filter: profile + folder + search ---
 
         void ApplyFilter()
         {
@@ -329,9 +372,8 @@ namespace MailPull
 
             string q = (_txtSearch.Text ?? "").Trim().ToLower();
 
-            foreach (var r in _allRecords)
+            foreach (var r in _activeRecords)
             {
-                // Folder filter: col 5 (folder_path) starts with selected folder
                 if (_selectedFolder.Length > 0)
                 {
                     string fp = r.Length > 5 ? r[5].TrimStart('\\') : "";
@@ -340,8 +382,6 @@ namespace MailPull
                         continue;
                 }
 
-                // Search filter: subject(3), sender_email(1), sender_name(2),
-                //   attachment_paths(8), body_text(10)
                 if (q.Length > 0)
                 {
                     string subject = r.Length > 3 ? r[3].ToLower() : "";
@@ -356,10 +396,8 @@ namespace MailPull
                 }
 
                 _currentRecords.Add(r);
-                string date = r.Length > 4
-                    ? (r[4].Length >= 10 ? r[4].Substring(0, 10) : r[4]) : "";
-                string subj = r.Length > 3 ? r[3] : "";
-                _mailList.Items.Add(new[] { date, subj });
+                string date = r.Length > 4 ? (r[4].Length >= 10 ? r[4].Substring(0, 10) : r[4]) : "";
+                _mailList.Items.Add(new[] { date, r.Length > 3 ? r[3] : "" });
             }
 
             _statusText.Text = string.Format("{0} mail(s)", _currentRecords.Count);
@@ -382,7 +420,6 @@ namespace MailPull
             _headerBlock.Text = string.Format("From: {0} ({1})\nDate: {2}\nSubject: {3}",
                 name, email, date, subject);
 
-            // Body: prefer full body.txt, fallback to manifest body_text
             string bodyPath = r.Length > 6 ? r[6] : "";
             try
             {
@@ -393,7 +430,6 @@ namespace MailPull
             }
             catch { _bodyBox.Text = r.Length > 10 ? r[10] : ""; }
 
-            // Attachments
             _attachList.Items.Clear();
             if (!string.IsNullOrEmpty(mailDir))
             {
