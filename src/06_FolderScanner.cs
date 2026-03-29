@@ -141,7 +141,7 @@ namespace WatchBox
             {
                 if (CancelRequested) break;
                 string fn = Path.GetFileName(filePath);
-                if (fn == "manifest.csv" || fn == "log.csv") continue;
+                if (fn == ".manifest.csv" || fn == "manifest.csv" || fn == "log.csv") continue;
 
                 try
                 {

@@ -69,7 +69,9 @@ namespace WatchBox
             // Mail-specific
             "account", "outlook_folder", "since", "filter_mode", "filters", "flat_output",
             // Folder-specific (source_folder optional: set = copy mode, empty = manifest-only)
-            "source_folder", "recurse"
+            "source_folder", "recurse",
+            // Manifest visibility
+            "manifest_hidden"
         };
 
         public static int ProfileCount
@@ -108,6 +110,7 @@ namespace WatchBox
             PSet(idx, "flat_output", "0");
             PSet(idx, "source_folder", "");
             PSet(idx, "recurse", "1");
+            PSet(idx, "manifest_hidden", "1");
             return idx;
         }
 

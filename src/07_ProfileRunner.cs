@@ -16,7 +16,10 @@ namespace WatchBox
             if (string.IsNullOrEmpty(outputRoot)) return new RunResult();
 
             bool logEnabled = Config.PGet(profileIndex, "log_enabled", "1") == "1";
+            bool hideManifest = Config.PGet(profileIndex, "manifest_hidden", "1") == "1";
             var config = BuildConfig(profileIndex);
+            bool hasSource = !string.IsNullOrEmpty(
+                type == "mail" ? config["account"] : config["source_folder"]);
 
             if (scanner == null)
             {
@@ -37,16 +40,18 @@ namespace WatchBox
             foreach (var item in newItems)
             {
                 bool wasKnown = knownIds.Contains(item.ItemId);
-                WriteManifestRow(type, outputRoot, item, config);
+                WriteManifestRow(type, outputRoot, item, config, hideManifest);
                 if (logEnabled)
                     ChangeLog.Append(outputRoot, wasKnown ? "modified" : "added",
                         item.ItemId, item.Name);
                 if (wasKnown) modified++; else added++;
             }
 
-            // Process removals
+            // Process removals (mirror: delete from output too)
             if (removedIds.Count > 0)
             {
+                if (hasSource && type != "mail")
+                    DeleteMirroredFiles(outputRoot, removedIds);
                 if (logEnabled)
                     LogRemovals(outputRoot, removedIds);
                 ManifestIO.RemoveRows(outputRoot, new HashSet<string>(removedIds));
@@ -54,13 +59,13 @@ namespace WatchBox
 
             // Rewrite folder manifest when items were modified (updated rows need replacing)
             if (modified > 0 && type != "mail")
-                RewriteFolderManifest(outputRoot, config, type);
+                RewriteFolderManifest(outputRoot, config, type, hideManifest);
 
             return new RunResult { Added = added, Modified = modified, Removed = removedIds.Count };
         }
 
         static void WriteManifestRow(string type, string outputRoot,
-            ScanResult item, Dictionary<string, string> config)
+            ScanResult item, Dictionary<string, string> config, bool hide)
         {
             if (type == "mail")
             {
@@ -68,14 +73,31 @@ namespace WatchBox
                     item.ItemId, item.SenderEmail, item.SenderName,
                     item.Subject, item.ReceivedAt, item.SourcePath,
                     item.BodyPath, item.MsgPath, item.AttachmentPaths,
-                    item.ItemFolder, item.BodyText);
+                    item.ItemFolder, item.BodyText, hide);
             }
             else
             {
                 ManifestIO.AppendFolderRow(outputRoot,
                     item.ItemId, item.Name, item.SourcePath,
                     item.ItemFolder, GetRelativePath(outputRoot, item, config),
-                    item.Size, item.ModifiedAt);
+                    item.Size, item.ModifiedAt, hide);
+            }
+        }
+
+        static void DeleteMirroredFiles(string outputRoot, List<string> removedIds)
+        {
+            var rows = ManifestIO.LoadFolderRows(outputRoot);
+            foreach (var id in removedIds)
+            {
+                FolderManifestRow row;
+                if (!rows.TryGetValue(id, out row)) continue;
+                string destPath = Path.Combine(outputRoot,
+                    row.RelativePath.Replace('/', '\\'));
+                try
+                {
+                    if (File.Exists(destPath)) File.Delete(destPath);
+                }
+                catch { }
             }
         }
 
@@ -120,7 +142,7 @@ namespace WatchBox
 
         // Rewrite folder manifest: re-scan and write fresh
         static void RewriteFolderManifest(string outputRoot, Dictionary<string, string> config,
-            string type)
+            string type, bool hide = true)
         {
             bool recurse = !config.ContainsKey("recurse") || config["recurse"] != "0";
 
@@ -137,7 +159,7 @@ namespace WatchBox
             foreach (var filePath in files)
             {
                 string fn = Path.GetFileName(filePath);
-                if (fn == "manifest.csv" || fn == "log.csv") continue;
+                if (fn == ".manifest.csv" || fn == "manifest.csv" || fn == "log.csv") continue;
                 try
                 {
                     string relativePath = filePath.Substring(scanRoot.Length).TrimStart('\\', '/');
@@ -154,7 +176,7 @@ namespace WatchBox
                 }
                 catch { }
             }
-            ManifestIO.WriteFolderManifest(outputRoot, rows);
+            ManifestIO.WriteFolderManifest(outputRoot, rows, hide);
         }
     }
 }

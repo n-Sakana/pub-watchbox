@@ -13,19 +13,46 @@ namespace WatchBox
     {
         ComboBox _cmbProfile;
         TreeView _treeView;
-        ListView _mailList;
-        TextBlock _headerBlock;
-        TextBox _bodyBox;
-        ListBox _attachList;
+        ListView _itemList;
         TextBox _txtSearch;
         UIElement _placeholder;
         TextBlock _statusText;
+
+        // Mail detail
+        TextBlock _headerBlock;
+        TextBox _bodyBox;
+        ListBox _attachList;
+
+        // Folder detail
+        TextBlock _fileInfoBlock;
+
+        // Right panel containers
+        DockPanel _mailDetailPanel;
+        DockPanel _folderDetailPanel;
+        Grid _rightGrid;
 
         Dictionary<int, List<string[]>> _profileRecords = new Dictionary<int, List<string[]>>();
         Dictionary<int, string> _profileTypes = new Dictionary<int, string>();
         List<string[]> _activeRecords = new List<string[]>();
         List<string[]> _currentRecords = new List<string[]>();
         string _selectedFolder = "";
+        string _currentType = "mail";
+        Grid _mainGrid;
+        ColumnDefinition _leftCol, _centerCol, _rightCol, _splitter2Col;
+        GridSplitter _vSplitter2;
+
+        // fin-studio light theme
+        static readonly Brush TreeBg = new SolidColorBrush(Color.FromRgb(250, 250, 250));
+        static readonly Brush TreeFg = new SolidColorBrush(Color.FromRgb(80, 80, 80));
+        static readonly Brush TreeSelBg = new SolidColorBrush(Color.FromRgb(208, 232, 247));
+        static readonly Brush TreeSelFg = new SolidColorBrush(Color.FromRgb(26, 26, 26));
+        static readonly Brush TreeHoverBg = new SolidColorBrush(Color.FromRgb(230, 230, 230));
+        static readonly Brush AccentBrush = new SolidColorBrush(Color.FromRgb(37, 99, 235));
+        static readonly Brush PanelBg = Brushes.White;
+        static readonly Brush BorderColor = new SolidColorBrush(Color.FromRgb(230, 230, 230));
+        static readonly Brush MutedFg = new SolidColorBrush(Color.FromRgb(144, 144, 144));
+        static readonly Brush SubtleFg = new SolidColorBrush(Color.FromRgb(80, 80, 80));
+        static readonly Brush BarBg = new SolidColorBrush(Color.FromRgb(250, 250, 250));
 
         public SearchWindow()
         {
@@ -34,7 +61,7 @@ namespace WatchBox
             Width = 960; Height = 620;
             MinWidth = 700; MinHeight = 400;
             WindowStartupLocation = WindowStartupLocation.CenterScreen;
-            Background = Brushes.White;
+            Background = PanelBg;
             FontFamily = new FontFamily("Segoe UI");
             FontSize = 13;
 
@@ -44,8 +71,7 @@ namespace WatchBox
             var searchBar = new Border
             {
                 BorderThickness = new Thickness(0, 0, 0, 1),
-                BorderBrush = new SolidColorBrush(Color.FromRgb(230, 230, 230)),
-                Background = new SolidColorBrush(Color.FromRgb(248, 248, 248)),
+                BorderBrush = BorderColor, Background = BarBg,
                 Padding = new Thickness(12, 8, 12, 8)
             };
             var searchGrid = new Grid();
@@ -91,30 +117,28 @@ namespace WatchBox
             var statusBar = new Border
             {
                 BorderThickness = new Thickness(0, 1, 0, 0),
-                BorderBrush = new SolidColorBrush(Color.FromRgb(230, 230, 230)),
-                Background = new SolidColorBrush(Color.FromRgb(248, 248, 248)),
+                BorderBrush = BorderColor, Background = BarBg,
                 Padding = new Thickness(12, 6, 12, 6)
             };
-            _statusText = new TextBlock
-            {
-                Text = "Ready",
-                Foreground = new SolidColorBrush(Color.FromRgb(128, 128, 128)),
-                FontSize = 11
-            };
+            _statusText = new TextBlock { Text = "Ready", Foreground = MutedFg, FontSize = 11 };
             statusBar.Child = _statusText;
             DockPanel.SetDock(statusBar, Dock.Bottom);
             root.Children.Add(statusBar);
 
-            // -- Main 3-pane --
-            var mainGrid = new Grid();
-            mainGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(220), MinWidth = 140 });
-            mainGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-            mainGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(300), MinWidth = 180 });
-            mainGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-            mainGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star), MinWidth = 200 });
+            // -- Main grid (5 columns: left | splitter | center | splitter | right) --
+            _mainGrid = new Grid();
+            _leftCol = new ColumnDefinition { Width = new GridLength(240), MinWidth = 140 };
+            _centerCol = new ColumnDefinition { Width = new GridLength(300), MinWidth = 180 };
+            _splitter2Col = new ColumnDefinition { Width = GridLength.Auto };
+            _rightCol = new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star), MinWidth = 200 };
+            _mainGrid.ColumnDefinitions.Add(_leftCol);
+            _mainGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            _mainGrid.ColumnDefinitions.Add(_centerCol);
+            _mainGrid.ColumnDefinitions.Add(_splitter2Col);
+            _mainGrid.ColumnDefinitions.Add(_rightCol);
 
-            // Left: profile combo + folder tree
-            var leftPanel = new DockPanel();
+            // Left: profile combo + VS Code-style tree
+            var leftPanel = new DockPanel { Background = TreeBg };
             _cmbProfile = new ComboBox { Margin = new Thickness(4), FontSize = 12 };
             _cmbProfile.SelectionChanged += OnProfileChanged;
             DockPanel.SetDock(_cmbProfile, Dock.Top);
@@ -123,20 +147,42 @@ namespace WatchBox
             _treeView = new TreeView
             {
                 BorderThickness = new Thickness(0),
-                Background = new SolidColorBrush(Color.FromRgb(252, 252, 252)),
-                FontSize = 12
+                Background = TreeBg, Foreground = TreeFg,
+                FontFamily = new FontFamily("Segoe UI"),
+                FontSize = 12, Padding = new Thickness(0, 4, 0, 4)
             };
+            _treeView.Resources.Add(SystemColors.HighlightBrushKey, TreeSelBg);
+            _treeView.Resources.Add(SystemColors.HighlightTextBrushKey, TreeSelFg);
+            _treeView.Resources.Add(SystemColors.InactiveSelectionHighlightBrushKey, TreeSelBg);
+            _treeView.Resources.Add(SystemColors.InactiveSelectionHighlightTextBrushKey, TreeSelFg);
             ScrollViewer.SetHorizontalScrollBarVisibility(_treeView, ScrollBarVisibility.Auto);
             _treeView.SelectedItemChanged += OnFolderSelected;
             leftPanel.Children.Add(_treeView);
 
             Grid.SetColumn(leftPanel, 0);
-            mainGrid.Children.Add(leftPanel);
-            mainGrid.Children.Add(MkVSplitter(1));
-            mainGrid.Children.Add(MkVSplitter(3));
+            _mainGrid.Children.Add(leftPanel);
+            _mainGrid.Children.Add(MkVSplitter(1));
+            _vSplitter2 = MkVSplitter(3);
+            _mainGrid.Children.Add(_vSplitter2);
 
-            // Center: item list
-            _mailList = new ListView { BorderThickness = new Thickness(0) };
+            // Right: content area (switches between mail and folder layouts)
+            _rightGrid = new Grid();
+            Grid.SetColumn(_rightGrid, 4);
+            _mainGrid.Children.Add(_rightGrid);
+
+            BuildMailLayout();
+            BuildFolderLayout();
+
+            root.Children.Add(_mainGrid);
+            Content = root;
+
+            Loaded += (s, e) => LoadData();
+        }
+
+        void BuildMailLayout()
+        {
+            // Item list (goes in center column for mail)
+            _itemList = new ListView { BorderThickness = new Thickness(0) };
             var gridView = new GridView();
             gridView.Columns.Add(new GridViewColumn
             {
@@ -156,37 +202,34 @@ namespace WatchBox
                 DisplayMemberBinding = new Binding("[2]"),
                 HeaderContainerStyle = LeftAlignStyle()
             };
-            var extraHeader = new TextBlock
+            extraCol.Header = new TextBlock
             {
                 Text = "\uE723",
                 FontFamily = new FontFamily("Segoe MDL2 Assets"),
                 FontSize = 12
             };
-            extraCol.Header = extraHeader;
             gridView.Columns.Add(extraCol);
-            _mailList.View = gridView;
-            _mailList.SelectionChanged += OnItemSelected;
-            _mailList.SizeChanged += (s, e) =>
+            _itemList.View = gridView;
+            _itemList.SelectionChanged += OnItemSelected;
+            _itemList.SizeChanged += (s, e) =>
             {
                 if (gridView.Columns.Count > 2)
-                    gridView.Columns[1].Width = _mailList.ActualWidth - 152;
+                    gridView.Columns[1].Width = _itemList.ActualWidth - 152;
             };
-            Grid.SetColumn(_mailList, 2);
-            mainGrid.Children.Add(_mailList);
 
-            // Right: header+body (top) + attachments (bottom)
-            var rightGrid = new Grid();
-            rightGrid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star), MinHeight = 100 });
-            rightGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-            rightGrid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(100), MinHeight = 60 });
+            // Mail detail panel (header + body + attachments, goes in right column)
+            _mailDetailPanel = new DockPanel();
+            var detailGrid = new Grid();
+            detailGrid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star), MinHeight = 100 });
+            detailGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            detailGrid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(100), MinHeight = 60 });
 
             var bodyPanel = new DockPanel();
             _headerBlock = new TextBlock
             {
                 Padding = new Thickness(12, 10, 12, 10),
                 Background = new SolidColorBrush(Color.FromRgb(250, 250, 250)),
-                TextWrapping = TextWrapping.Wrap, FontSize = 12,
-                Foreground = new SolidColorBrush(Color.FromRgb(80, 80, 80))
+                TextWrapping = TextWrapping.Wrap, FontSize = 12, Foreground = SubtleFg
             };
             DockPanel.SetDock(_headerBlock, Dock.Top);
             bodyPanel.Children.Add(_headerBlock);
@@ -200,24 +243,15 @@ namespace WatchBox
             };
             bodyPanel.Children.Add(_bodyBox);
             Grid.SetRow(bodyPanel, 0);
-            rightGrid.Children.Add(bodyPanel);
-
-            var hSplitter = new GridSplitter
-            {
-                Height = 4, HorizontalAlignment = HorizontalAlignment.Stretch,
-                VerticalAlignment = VerticalAlignment.Center,
-                Background = new SolidColorBrush(Color.FromRgb(230, 230, 230))
-            };
-            Grid.SetRow(hSplitter, 1);
-            rightGrid.Children.Add(hSplitter);
+            detailGrid.Children.Add(bodyPanel);
+            detailGrid.Children.Add(MkHSplitter(1));
 
             var attachPanel = new DockPanel();
             var attachHdr = new TextBlock
             {
-                Text = " Attachments / Files", FontSize = 11,
+                Text = " Attachments", FontSize = 11,
                 Padding = new Thickness(12, 4, 0, 4),
-                Foreground = new SolidColorBrush(Color.FromRgb(100, 100, 100)),
-                Background = new SolidColorBrush(Color.FromRgb(248, 248, 248))
+                Foreground = SubtleFg, Background = BarBg
             };
             DockPanel.SetDock(attachHdr, Dock.Top);
             attachPanel.Children.Add(attachHdr);
@@ -225,15 +259,180 @@ namespace WatchBox
             _attachList.MouseDoubleClick += OnAttachDoubleClick;
             attachPanel.Children.Add(_attachList);
             Grid.SetRow(attachPanel, 2);
-            rightGrid.Children.Add(attachPanel);
+            detailGrid.Children.Add(attachPanel);
 
-            Grid.SetColumn(rightGrid, 4);
-            mainGrid.Children.Add(rightGrid);
+            _mailDetailPanel.Children.Add(detailGrid);
+        }
 
-            root.Children.Add(mainGrid);
-            Content = root;
+        void BuildFolderLayout()
+        {
+            _folderDetailPanel = new DockPanel();
 
-            Loaded += (s, e) => LoadData();
+            // Split: file list (top, large) + file info (bottom, small)
+            var splitGrid = new Grid();
+            splitGrid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star), MinHeight = 150 });
+            splitGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            splitGrid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(120), MinHeight = 60 });
+
+            // Reuse _itemList (it gets moved between panels)
+            // File info panel
+            var infoPanel = new DockPanel();
+            var infoHdr = new TextBlock
+            {
+                Text = " File Info", FontSize = 11,
+                Padding = new Thickness(12, 4, 0, 4),
+                Foreground = SubtleFg, Background = BarBg
+            };
+            DockPanel.SetDock(infoHdr, Dock.Top);
+            infoPanel.Children.Add(infoHdr);
+            _fileInfoBlock = new TextBlock
+            {
+                Padding = new Thickness(12, 8, 12, 8),
+                FontSize = 12, Foreground = SubtleFg,
+                TextWrapping = TextWrapping.Wrap
+            };
+            infoPanel.Children.Add(_fileInfoBlock);
+            Grid.SetRow(infoPanel, 2);
+            splitGrid.Children.Add(MkHSplitter(1));
+            splitGrid.Children.Add(infoPanel);
+
+            _folderDetailPanel.Children.Add(splitGrid);
+        }
+
+        void SwitchLayout(string type)
+        {
+            _currentType = type;
+            _rightGrid.Children.Clear();
+
+            // Remove item list from wherever it is
+            var parent = _itemList.Parent as Panel;
+            if (parent != null) parent.Children.Remove(_itemList);
+            if (_mainGrid.Children.Contains(_itemList)) _mainGrid.Children.Remove(_itemList);
+
+            if (type == "folder")
+            {
+                // 2-pane: left tree (wide) + right (list + info)
+                _leftCol.Width = new GridLength(300);
+                _centerCol.Width = new GridLength(0);
+                _centerCol.MinWidth = 0;
+                _splitter2Col.Width = new GridLength(0);
+                _vSplitter2.Visibility = Visibility.Collapsed;
+
+                var grid = (Grid)_folderDetailPanel.Children[0];
+                if (!grid.Children.Contains(_itemList))
+                {
+                    Grid.SetRow(_itemList, 0);
+                    grid.Children.Insert(0, _itemList);
+                }
+                _rightGrid.Children.Add(_folderDetailPanel);
+            }
+            else
+            {
+                // 3-pane: left tree + center list + right detail
+                _leftCol.Width = new GridLength(220);
+                _centerCol.Width = new GridLength(300);
+                _centerCol.MinWidth = 180;
+                _splitter2Col.Width = GridLength.Auto;
+                _vSplitter2.Visibility = Visibility.Visible;
+
+                Grid.SetColumn(_itemList, 2);
+                _mainGrid.Children.Add(_itemList);
+                _rightGrid.Children.Add(_mailDetailPanel);
+            }
+        }
+
+        // --- Tree (relative to output_root, all expanded) ---
+
+        void RebuildTree()
+        {
+            _treeView.Items.Clear();
+
+            int sel = _cmbProfile.SelectedIndex;
+            string outputRoot = sel >= 0 ? Config.PGet(sel, "output_root") : "";
+            if (!string.IsNullOrEmpty(outputRoot))
+                outputRoot = outputRoot.TrimEnd('\\');
+
+            // Collect unique folder paths and file counts
+            // For mail: use folder_path as-is (Outlook paths)
+            // For folder: make relative to output_root
+            var folderCounts = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+            foreach (var r in _activeRecords)
+            {
+                string fp = RecordFolderPath(r);
+                if (string.IsNullOrEmpty(fp)) continue;
+                string rel = fp.TrimStart('\\');
+                if (_currentType != "mail" && !string.IsNullOrEmpty(outputRoot) &&
+                    fp.StartsWith(outputRoot, StringComparison.OrdinalIgnoreCase))
+                    rel = fp.Substring(outputRoot.Length).TrimStart('\\');
+                if (rel.Length == 0) rel = ".";
+                if (!folderCounts.ContainsKey(rel)) folderCounts[rel] = 0;
+                folderCounts[rel]++;
+            }
+
+            // Build tree nodes
+            var nodes = new Dictionary<string, TreeViewItem>(StringComparer.OrdinalIgnoreCase);
+            var sorted = new List<string>(folderCounts.Keys);
+            sorted.Sort(StringComparer.OrdinalIgnoreCase);
+
+            foreach (var rel in sorted)
+            {
+                if (rel == ".")
+                {
+                    var rootNode = MkTreeNode(Path.GetFileName(outputRoot), ".", folderCounts[rel]);
+                    nodes["."] = rootNode;
+                    _treeView.Items.Add(rootNode);
+                    continue;
+                }
+                var parts = rel.Split('\\');
+                string cum = "";
+                TreeViewItem parent = null;
+                for (int i = 0; i < parts.Length; i++)
+                {
+                    cum = cum.Length == 0 ? parts[i] : cum + "\\" + parts[i];
+                    TreeViewItem existing;
+                    if (nodes.TryGetValue(cum, out existing)) { parent = existing; continue; }
+
+                    int count = 0;
+                    if (i == parts.Length - 1) folderCounts.TryGetValue(rel, out count);
+                    var node = MkTreeNode(parts[i], cum, count);
+                    nodes[cum] = node;
+                    if (parent != null) parent.Items.Add(node);
+                    else _treeView.Items.Add(node);
+                    parent = node;
+                }
+            }
+        }
+
+        TreeViewItem MkTreeNode(string name, string tag, int count)
+        {
+            var sp = new StackPanel { Orientation = Orientation.Horizontal };
+            sp.Children.Add(new TextBlock
+            {
+                Text = "\uE8B7",
+                FontFamily = new FontFamily("Segoe MDL2 Assets"),
+                FontSize = 10, Foreground = MutedFg,
+                Margin = new Thickness(0, 0, 5, 0),
+                VerticalAlignment = VerticalAlignment.Center
+            });
+            var label = name;
+            if (count > 0) label += "  " + count;
+            sp.Children.Add(new TextBlock
+            {
+                Text = label, VerticalAlignment = VerticalAlignment.Center, Foreground = TreeFg
+            });
+            return new TreeViewItem
+            {
+                Header = sp, Tag = tag, IsExpanded = true,
+                Padding = new Thickness(2, 1, 2, 1)
+            };
+        }
+
+        void OnFolderSelected(object sender, RoutedPropertyChangedEventArgs<object> e)
+        {
+            var item = _treeView.SelectedItem as TreeViewItem;
+            if (item == null || item.Tag == null) return;
+            _selectedFolder = (string)item.Tag;
+            ApplyFilter();
         }
 
         // --- Helpers ---
@@ -244,9 +443,21 @@ namespace WatchBox
             {
                 Width = 4, HorizontalAlignment = HorizontalAlignment.Center,
                 VerticalAlignment = VerticalAlignment.Stretch,
-                Background = new SolidColorBrush(Color.FromRgb(230, 230, 230))
+                Background = BorderColor
             };
             Grid.SetColumn(sp, col);
+            return sp;
+        }
+
+        GridSplitter MkHSplitter(int row)
+        {
+            var sp = new GridSplitter
+            {
+                Height = 4, HorizontalAlignment = HorizontalAlignment.Stretch,
+                VerticalAlignment = VerticalAlignment.Center,
+                Background = BorderColor
+            };
+            Grid.SetRow(sp, row);
             return sp;
         }
 
@@ -260,50 +471,31 @@ namespace WatchBox
             return style;
         }
 
-        // Detect record type: mail has entry_id-style IDs (long hex), folder has short hex
-        static bool IsMailRecord(string[] cols)
-        {
-            // Mail manifest: 11 columns, folder manifest: 7 columns
-            return cols.Length >= 11;
-        }
-
-        // --- Column accessors by type ---
-        // Mail: entry_id(0) sender_email(1) sender_name(2) subject(3) received_at(4)
-        //       folder_path(5) body_path(6) msg_path(7) attachment_paths(8) mail_folder(9) body_text(10)
-        // Folder: item_id(0) file_name(1) file_path(2) folder_path(3) relative_path(4)
-        //         file_size(5) modified_at(6)
+        static bool IsMailRecord(string[] cols) { return cols.Length >= 11; }
 
         static string RecordDate(string[] r)
         {
-            if (IsMailRecord(r))
-                return r.Length > 4 ? r[4] : "";
-            return r.Length > 6 ? r[6] : "";  // modified_at
+            return IsMailRecord(r) ? (r.Length > 4 ? r[4] : "") : (r.Length > 6 ? r[6] : "");
         }
 
         static string RecordName(string[] r)
         {
-            if (IsMailRecord(r))
-                return r.Length > 3 ? r[3] : "";  // subject
-            return r.Length > 1 ? r[1] : "";  // file_name
+            return IsMailRecord(r) ? (r.Length > 3 ? r[3] : "") : (r.Length > 1 ? r[1] : "");
         }
 
         static string RecordFolderPath(string[] r)
         {
-            if (IsMailRecord(r))
-                return r.Length > 5 ? r[5] : "";
-            return r.Length > 3 ? r[3] : "";
+            return IsMailRecord(r) ? (r.Length > 5 ? r[5] : "") : (r.Length > 3 ? r[3] : "");
         }
 
         static string RecordExtra(string[] r)
         {
             if (IsMailRecord(r))
             {
-                // Attachment count
                 string att = r.Length > 8 ? r[8] : "";
                 if (string.IsNullOrEmpty(att)) return "";
                 return att.Split('|').Length.ToString();
             }
-            // File size
             return r.Length > 5 ? FormatSize(r[5]) : "";
         }
 
@@ -323,38 +515,32 @@ namespace WatchBox
                 string subject = r.Length > 3 ? r[3].ToLower() : "";
                 string email = r.Length > 1 ? r[1].ToLower() : "";
                 string name = r.Length > 2 ? r[2].ToLower() : "";
-                string attach = r.Length > 8 ? r[8].ToLower() : "";
                 string body = r.Length > 10 ? r[10].ToLower() : "";
-                return subject.Contains(q) || email.Contains(q) || name.Contains(q)
-                    || attach.Contains(q) || body.Contains(q);
+                return subject.Contains(q) || email.Contains(q) || name.Contains(q) || body.Contains(q);
             }
-            else
-            {
-                string fileName = r.Length > 1 ? r[1].ToLower() : "";
-                string filePath = r.Length > 2 ? r[2].ToLower() : "";
-                string relPath = r.Length > 4 ? r[4].ToLower() : "";
-                return fileName.Contains(q) || filePath.Contains(q) || relPath.Contains(q);
-            }
+            string fileName = r.Length > 1 ? r[1].ToLower() : "";
+            string relPath = r.Length > 4 ? r[4].ToLower() : "";
+            return fileName.Contains(q) || relPath.Contains(q);
         }
 
-        // --- Load all profiles' manifest data ---
+        // --- Load data ---
 
         void LoadData()
         {
             _profileRecords.Clear();
             _profileTypes.Clear();
             _cmbProfile.Items.Clear();
-            _cmbProfile.Items.Add("(All)");
 
             for (int p = 0; p < Config.ProfileCount; p++)
             {
                 _cmbProfile.Items.Add(Config.PGet(p, "name", "Profile " + (p + 1)));
-                _profileTypes[p] = Config.PGet(p, "type", "mail");
+                string type = Config.PGet(p, "type", "mail");
+                _profileTypes[p] = type;
                 var records = new List<string[]>();
                 string root = Config.PGet(p, "output_root");
                 if (!string.IsNullOrEmpty(root))
                 {
-                    string csvPath = Path.Combine(root, "manifest.csv");
+                    string csvPath = ManifestIO.ResolvePath(root);
                     if (File.Exists(csvPath))
                         foreach (var line in File.ReadAllLines(csvPath, System.Text.Encoding.UTF8))
                         {
@@ -368,15 +554,22 @@ namespace WatchBox
                 _profileRecords[p] = records;
             }
 
-            _cmbProfile.SelectedIndex = 0;
+            if (_cmbProfile.Items.Count > 0)
+                _cmbProfile.SelectedIndex = 0;
         }
 
         // --- Profile selection ---
 
         void OnProfileChanged(object sender, SelectionChangedEventArgs e)
         {
-            if (_cmbProfile.SelectedIndex < 0) return;
+            int sel = _cmbProfile.SelectedIndex;
+            if (sel < 0) return;
             _selectedFolder = "";
+
+            string type = "mail";
+            if (_profileTypes.ContainsKey(sel)) type = _profileTypes[sel];
+            SwitchLayout(type);
+
             RebuildActive();
             RebuildTree();
             ApplyFilter();
@@ -385,82 +578,18 @@ namespace WatchBox
         void RebuildActive()
         {
             _activeRecords.Clear();
-            int sel = _cmbProfile.SelectedIndex - 1;
-            var seenIds = new HashSet<string>();
-
-            if (sel < 0)
-            {
-                foreach (var kv in _profileRecords)
-                    foreach (var r in kv.Value)
-                    {
-                        if (seenIds.Contains(r[0])) continue;
-                        seenIds.Add(r[0]);
-                        _activeRecords.Add(r);
-                    }
-            }
-            else
-            {
-                List<string[]> recs;
-                if (_profileRecords.TryGetValue(sel, out recs))
-                    _activeRecords.AddRange(recs);
-            }
+            int sel = _cmbProfile.SelectedIndex;
+            if (sel < 0) return;
+            List<string[]> recs;
+            if (_profileRecords.TryGetValue(sel, out recs))
+                _activeRecords.AddRange(recs);
         }
 
-        void RebuildTree()
-        {
-            _treeView.Items.Clear();
-            var folders = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            foreach (var r in _activeRecords)
-                folders.Add(RecordFolderPath(r));
-
-            var nodes = new Dictionary<string, TreeViewItem>(StringComparer.OrdinalIgnoreCase);
-            var sorted = new List<string>(folders);
-            sorted.Sort(StringComparer.OrdinalIgnoreCase);
-
-            foreach (var fp in sorted)
-            {
-                if (string.IsNullOrEmpty(fp)) continue;
-                var parts = new List<string>();
-                foreach (var p in fp.Split('\\'))
-                    if (p.Length > 0) parts.Add(p);
-                if (parts.Count == 0) continue;
-
-                string cum = "";
-                TreeViewItem parent = null;
-                for (int i = 0; i < parts.Count; i++)
-                {
-                    cum += "\\" + parts[i];
-                    TreeViewItem existing;
-                    if (nodes.TryGetValue(cum, out existing)) { parent = existing; continue; }
-                    var node = new TreeViewItem
-                    {
-                        Header = parts[i], Tag = cum,
-                        IsExpanded = i == 0,
-                        FontWeight = i == 0 ? FontWeights.SemiBold : FontWeights.Normal
-                    };
-                    nodes[cum] = node;
-                    if (parent != null) parent.Items.Add(node);
-                    else _treeView.Items.Add(node);
-                    parent = node;
-                }
-            }
-        }
-
-        // --- Folder selected ---
-
-        void OnFolderSelected(object sender, RoutedPropertyChangedEventArgs<object> e)
-        {
-            var item = _treeView.SelectedItem as TreeViewItem;
-            if (item == null || item.Tag == null) return;
-            _selectedFolder = (string)item.Tag;
-            ApplyFilter();
-        }
-
-        // --- Filter: profile + folder + search ---
+        // --- Filter ---
 
         void ApplyFilter()
         {
-            _mailList.Items.Clear();
+            _itemList.Items.Clear();
             _currentRecords.Clear();
             ClearDetail();
 
@@ -468,21 +597,27 @@ namespace WatchBox
 
             foreach (var r in _activeRecords)
             {
-                if (_selectedFolder.Length > 0)
+                if (_selectedFolder.Length > 0 && _selectedFolder != ".")
                 {
                     string fp = RecordFolderPath(r).TrimStart('\\');
-                    string sel = _selectedFolder.TrimStart('\\');
-                    if (!fp.StartsWith(sel, StringComparison.OrdinalIgnoreCase))
+                    if (_currentType != "mail")
+                    {
+                        int pidx = _cmbProfile.SelectedIndex;
+                        string oRoot = pidx >= 0 ? Config.PGet(pidx, "output_root").TrimEnd('\\') : "";
+                        if (!string.IsNullOrEmpty(oRoot) &&
+                            fp.StartsWith(oRoot, StringComparison.OrdinalIgnoreCase))
+                            fp = fp.Substring(oRoot.Length).TrimStart('\\');
+                    }
+                    if (!fp.StartsWith(_selectedFolder, StringComparison.OrdinalIgnoreCase))
                         continue;
                 }
-
                 if (q.Length > 0 && !RecordMatchesQuery(r, q))
                     continue;
 
                 _currentRecords.Add(r);
                 string date = RecordDate(r);
                 if (date.Length >= 10) date = date.Substring(0, 10);
-                _mailList.Items.Add(new[] { date, RecordName(r), RecordExtra(r) });
+                _itemList.Items.Add(new[] { date, RecordName(r), RecordExtra(r) });
             }
 
             _statusText.Text = string.Format("{0} item(s)", _currentRecords.Count);
@@ -492,15 +627,14 @@ namespace WatchBox
 
         void OnItemSelected(object sender, SelectionChangedEventArgs e)
         {
-            int idx = _mailList.SelectedIndex;
+            int idx = _itemList.SelectedIndex;
             if (idx < 0 || idx >= _currentRecords.Count) return;
-
             var r = _currentRecords[idx];
 
-            if (IsMailRecord(r))
-                ShowMailDetail(r);
+            if (_currentType == "folder")
+                ShowFolderFileInfo(r);
             else
-                ShowFileDetail(r);
+                ShowMailDetail(r);
         }
 
         void ShowMailDetail(string[] r)
@@ -544,36 +678,25 @@ namespace WatchBox
             }
         }
 
-        void ShowFileDetail(string[] r)
+        void ShowFolderFileInfo(string[] r)
         {
             string fileName = r.Length > 1 ? r[1] : "";
             string filePath = r.Length > 2 ? r[2] : "";
-            string folderPath = r.Length > 3 ? r[3] : "";
             string relativePath = r.Length > 4 ? r[4] : "";
             string fileSize = r.Length > 5 ? FormatSize(r[5]) : "";
             string modifiedAt = r.Length > 6 ? r[6] : "";
 
-            _headerBlock.Text = string.Format("Name: {0}\nPath: {1}\nSize: {2}\nModified: {3}",
-                fileName, relativePath, fileSize, modifiedAt);
-            _bodyBox.Text = "";
+            string created = "";
+            try
+            {
+                if (!string.IsNullOrEmpty(filePath) && File.Exists(filePath))
+                    created = new FileInfo(filePath).CreationTime.ToString("yyyy-MM-dd HH:mm:ss");
+            }
+            catch { }
 
-            _attachList.Items.Clear();
-            if (!string.IsNullOrEmpty(filePath) && File.Exists(filePath))
-            {
-                _attachList.Items.Add(new ListBoxItem
-                {
-                    Content = "Open: " + fileName, Tag = filePath,
-                    Padding = new Thickness(8, 3, 8, 3)
-                });
-            }
-            if (!string.IsNullOrEmpty(folderPath) && Directory.Exists(folderPath))
-            {
-                _attachList.Items.Add(new ListBoxItem
-                {
-                    Content = "Open folder", Tag = folderPath,
-                    Padding = new Thickness(8, 3, 8, 3)
-                });
-            }
+            _fileInfoBlock.Text = string.Format(
+                "Name:      {0}\nPath:      {1}\nSize:      {2}\nModified:  {3}\nCreated:   {4}",
+                fileName, relativePath, fileSize, modifiedAt, created);
         }
 
         void OnAttachDoubleClick(object sender, MouseButtonEventArgs e)
@@ -586,9 +709,10 @@ namespace WatchBox
 
         void ClearDetail()
         {
-            _headerBlock.Text = "";
-            _bodyBox.Text = "";
-            _attachList.Items.Clear();
+            if (_headerBlock != null) _headerBlock.Text = "";
+            if (_bodyBox != null) _bodyBox.Text = "";
+            if (_attachList != null) _attachList.Items.Clear();
+            if (_fileInfoBlock != null) _fileInfoBlock.Text = "";
         }
     }
 }

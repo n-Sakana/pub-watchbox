@@ -16,6 +16,8 @@ namespace WatchBox
         DispatcherTimer _clockTimer;
         bool _watching;
         volatile bool _cancelRequested;
+        volatile bool _pulling;
+        volatile SourceScanner _activeScanner;
 
         static readonly Brush AccentBrush = new SolidColorBrush(Color.FromRgb(55, 120, 200));
         static readonly Brush AccentHover = new SolidColorBrush(Color.FromRgb(45, 100, 180));
@@ -114,12 +116,21 @@ namespace WatchBox
         void OnPullClick(object sender, RoutedEventArgs e)
         {
             if (_watching) return;
-            if (_cancelRequested) return;
+
+            // If already pulling, this is a Cancel click
+            if (_pulling)
+            {
+                _cancelRequested = true;
+                if (_activeScanner != null) _activeScanner.CancelRequested = true;
+                _status.Text = "Cancelling...";
+                return;
+            }
 
             if (Config.ProfileCount == 0)
             { MessageBox.Show("No profiles configured.", "watchbox"); return; }
 
             _cancelRequested = false;
+            _pulling = true;
             SetPullButton(true);
 
             RunOnStaThread(() =>
@@ -132,13 +143,18 @@ namespace WatchBox
                     if (string.IsNullOrEmpty(root)) continue;
                     string pname = Config.PGet(i, "name", "Profile " + i);
 
+                    string type = Config.PGet(i, "type", "mail");
+                    SourceScanner scanner = type == "folder"
+                        ? (SourceScanner)new FolderScanner() : new MailScanner();
+                    _activeScanner = scanner;
                     Action<int, string> progress = (c, s) =>
                         Dispatcher.BeginInvoke(new Action(() =>
                         {
                             if (s != null && s.Length > 36) s = s.Substring(0, 36);
                             _status.Text = string.Format("[{0}] {1}: {2}", pname, c, s);
                         }));
-                    var result = ProfileRunner.Run(i, null, progress);
+                    var result = ProfileRunner.Run(i, scanner, progress);
+                    _activeScanner = null;
                     totalAdded += result.Added;
                 }
                 return totalAdded;
@@ -147,6 +163,7 @@ namespace WatchBox
             {
                 bool cancelled = _cancelRequested;
                 _cancelRequested = false;
+                _pulling = false;
                 SetPullButton(false);
                 _status.Text = cancelled
                     ? string.Format("Cancelled ({0} new)", total)
@@ -183,25 +200,39 @@ namespace WatchBox
         {
             _watching = true;
             _btnPull.IsEnabled = false;
+            _btnWatch.IsEnabled = false;
+            _status.Text = "Initial sync...";
 
-            _eventWatcher = new EventWatcher();
-            _eventWatcher.Start(OnWatchEvent);
-
-            _clockTimer = new DispatcherTimer();
-            _clockTimer.Interval = TimeSpan.FromSeconds(1);
-            _clockTimer.Tick += (s2, e2) =>
+            // Initial full sync, then start event watch
+            RunOnStaThread(() =>
             {
-                if (_watching && !_status.Text.StartsWith("["))
-                    _status.Text = string.Format("Watching  {0:HH:mm:ss}", DateTime.Now);
-            };
-            _clockTimer.Start();
+                int total = 0;
+                for (int i = 0; i < Config.ProfileCount; i++)
+                    total += ProfileRunner.Run(i).Added;
+                return total;
+            },
+            total =>
+            {
+                _eventWatcher = new EventWatcher();
+                _eventWatcher.Start(OnWatchEvent);
 
-            _btnWatch.Background = AccentHover;
-            _btnWatch.Foreground = Brushes.White;
-            _btnWatch.BorderBrush = AccentHover;
-            ((TextBlock)((StackPanel)_btnWatch.Content).Children[0]).Text = "\uE71A";
-            ((TextBlock)((StackPanel)_btnWatch.Content).Children[1]).Text = "Stop";
-            _status.Text = string.Format("Watching  {0:HH:mm:ss}", DateTime.Now);
+                _clockTimer = new DispatcherTimer();
+                _clockTimer.Interval = TimeSpan.FromSeconds(1);
+                _clockTimer.Tick += (s2, e2) =>
+                {
+                    if (_watching && !_status.Text.StartsWith("["))
+                        _status.Text = string.Format("Watching  {0:HH:mm:ss}", DateTime.Now);
+                };
+                _clockTimer.Start();
+
+                _btnWatch.IsEnabled = true;
+                _btnWatch.Background = AccentHover;
+                _btnWatch.Foreground = Brushes.White;
+                _btnWatch.BorderBrush = AccentHover;
+                ((TextBlock)((StackPanel)_btnWatch.Content).Children[0]).Text = "\uE71A";
+                ((TextBlock)((StackPanel)_btnWatch.Content).Children[1]).Text = "Stop";
+                _status.Text = string.Format("Watching  {0:HH:mm:ss}", DateTime.Now);
+            });
         }
 
         void StopWatching()

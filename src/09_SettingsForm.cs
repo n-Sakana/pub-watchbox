@@ -21,6 +21,7 @@ namespace WatchBox
         CheckBox _chkRecurse;
         // SOURCE container
         StackPanel _sourceContent;
+        TextBlock _sourceHeader;
         // Common
         DatePicker _dpSince;
         RadioButton _rbAnd, _rbOr;
@@ -28,7 +29,7 @@ namespace WatchBox
         TextBox _txtNewFilter;
         TextBox _txtPath;
         CheckBox _chkFlat;
-        CheckBox _chkNotify, _chkLog;
+        CheckBox _chkNotify, _chkLog, _chkManifestHidden;
 
         List<string> _folderPaths = new List<string>();
         List<string> _currentFilters = new List<string>();
@@ -71,9 +72,17 @@ namespace WatchBox
             _cmbType.SelectionChanged += OnTypeChanged;
             root.Children.Add(FieldRow("Type", _cmbType));
 
-            // --- SOURCE (single section, content swapped by type) ---
+            // --- PULL (always required, first) ---
             root.Children.Add(new Separator { Margin = new Thickness(0, 8, 0, 8) });
-            root.Children.Add(SectionHeader("SOURCE"));
+            root.Children.Add(SectionHeader("PULL"));
+            root.Children.Add(FieldRow("Folder", _txtPath = new TextBox(), MkBrowseBtn()));
+            _chkFlat = new CheckBox { Content = "Flat (no folder structure)", FontSize = 12 };
+            root.Children.Add(FieldRow("", _chkFlat));
+
+            // --- SOURCE (swapped by type, grayed by mode) ---
+            root.Children.Add(new Separator { Margin = new Thickness(0, 8, 0, 8) });
+            _sourceHeader = SectionHeader("SOURCE");
+            root.Children.Add(_sourceHeader);
             _sourceContent = new StackPanel();
             root.Children.Add(_sourceContent);
 
@@ -120,33 +129,31 @@ namespace WatchBox
             filterAddBar.Children.Add(_txtNewFilter);
             btnFilterAdd.Click += (s, e) => AddFilter();
             btnFilterRemove.Click += (s, e) => RemoveFilter();
-            var filterContent = new StackPanel();
-            filterContent.Children.Add(_lstFilters);
-            filterContent.Children.Add(filterAddBar);
-            root.Children.Add(FieldRow("Keywords", filterContent));
-
-            // --- OUTPUT (common) ---
-            root.Children.Add(new Separator { Margin = new Thickness(0, 8, 0, 8) });
-            root.Children.Add(SectionHeader("OUTPUT"));
-            root.Children.Add(FieldRow("Folder", _txtPath = new TextBox(), MkBrowseBtn()));
-            _chkFlat = new CheckBox { Content = "Flat (no folder structure)", FontSize = 12 };
-            root.Children.Add(FieldRow("", _chkFlat));
+            var filterKwContent = new StackPanel();
+            filterKwContent.Children.Add(_lstFilters);
+            filterKwContent.Children.Add(filterAddBar);
+            root.Children.Add(FieldRow("Keywords", filterKwContent));
 
             // --- MONITORING (common) ---
             root.Children.Add(new Separator { Margin = new Thickness(0, 8, 0, 8) });
             root.Children.Add(SectionHeader("MONITORING"));
             _chkNotify = new CheckBox { Content = "Show notifications", FontSize = 12, IsChecked = true };
             _chkLog = new CheckBox { Content = "Write change log", FontSize = 12, IsChecked = true };
+            _chkManifestHidden = new CheckBox { Content = "Hide manifest file", FontSize = 12, IsChecked = true };
             root.Children.Add(FieldRow("", _chkNotify));
             root.Children.Add(FieldRow("", _chkLog));
+            root.Children.Add(FieldRow("", _chkManifestHidden));
 
             // Bottom buttons
             var btnBar = new DockPanel { Margin = new Thickness(0, 16, 0, 0) };
             var btnReset = new Button { Content = "Reset All", Padding = new Thickness(8, 6, 8, 6) };
+            var btnExport = new Button { Content = "Export CSV", Padding = new Thickness(8, 6, 8, 6), Margin = new Thickness(0, 0, 4, 0) };
             var btnImport = new Button { Content = "Import CSV", Padding = new Thickness(8, 6, 8, 6), Margin = new Thickness(0, 0, 4, 0) };
             DockPanel.SetDock(btnImport, Dock.Left);
+            DockPanel.SetDock(btnExport, Dock.Left);
             DockPanel.SetDock(btnReset, Dock.Left);
             btnBar.Children.Add(btnImport);
+            btnBar.Children.Add(btnExport);
             btnBar.Children.Add(btnReset);
             var rightBtns = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right };
             var btnSave = new Button { Content = "Save", Width = 80, Padding = new Thickness(0, 6, 0, 6), IsDefault = true };
@@ -163,6 +170,7 @@ namespace WatchBox
             btnCancel.Click += (s, e) => Close();
             btnReset.Click += OnResetAll;
             btnImport.Click += OnImportCsv;
+            btnExport.Click += OnExportCsv;
 
             LoadProfileList();
             if (_cmbProfile.Items.Count > 0)
@@ -384,6 +392,7 @@ namespace WatchBox
             // Common monitoring
             _chkNotify.IsChecked = Config.PGet(i, "notify", "1") != "0";
             _chkLog.IsChecked = Config.PGet(i, "log_enabled", "1") != "0";
+            _chkManifestHidden.IsChecked = Config.PGet(i, "manifest_hidden", "1") != "0";
 
             _loading = false;
         }
@@ -419,6 +428,7 @@ namespace WatchBox
             // Common monitoring
             Config.PSet(i, "notify", _chkNotify.IsChecked == true ? "1" : "0");
             Config.PSet(i, "log_enabled", _chkLog.IsChecked == true ? "1" : "0");
+            Config.PSet(i, "manifest_hidden", _chkManifestHidden.IsChecked == true ? "1" : "0");
 
             if (_cmbProfile.SelectedIndex == i && _cmbProfile.Items.Count > i)
                 _cmbProfile.Items[i] = _txtName.Text;
@@ -525,11 +535,12 @@ namespace WatchBox
                     Config.PSet(idx, "account", ColVal(cols, 3, ""));
                     Config.PSet(idx, "outlook_folder", ColVal(cols, 4, ""));
                     Config.PSet(idx, "source_folder", ColVal(cols, 5, ""));
-                    Config.PSet(idx, "since", "");
-                    Config.PSet(idx, "filter_mode", "or");
-                    Config.PSet(idx, "filters", "");
-                    Config.PSet(idx, "flat_output", "0");
-                    Config.PSet(idx, "recurse", "1");
+                    Config.PSet(idx, "manifest_hidden", ColVal(cols, 6, "1"));
+                    Config.PSet(idx, "filters", ColVal(cols, 7, ""));
+                    Config.PSet(idx, "filter_mode", ColVal(cols, 8, "or"));
+                    Config.PSet(idx, "flat_output", ColVal(cols, 9, "0"));
+                    Config.PSet(idx, "recurse", ColVal(cols, 10, "1"));
+                    Config.PSet(idx, "since", ColVal(cols, 11, ""));
                     added++;
                 }
 
@@ -541,6 +552,44 @@ namespace WatchBox
             catch (Exception ex)
             {
                 MessageBox.Show("Import failed: " + ex.Message);
+            }
+        }
+
+        void OnExportCsv(object sender, RoutedEventArgs e)
+        {
+            SaveCurrentProfile();
+            var dlg = new Microsoft.Win32.SaveFileDialog();
+            dlg.Filter = "CSV files|*.csv|All files|*.*";
+            dlg.FileName = "profiles.csv";
+            if (dlg.ShowDialog() != true) return;
+
+            try
+            {
+                var lines = new List<string>();
+                lines.Add("name,type,output_root,account,outlook_folder,source_folder,manifest_hidden,filters,filter_mode,flat_output,recurse,since");
+                for (int i = 0; i < Config.ProfileCount; i++)
+                {
+                    lines.Add(string.Join(",", new[] {
+                        Config.PGet(i, "name"),
+                        Config.PGet(i, "type"),
+                        Config.PGet(i, "output_root"),
+                        Config.PGet(i, "account"),
+                        Config.PGet(i, "outlook_folder"),
+                        Config.PGet(i, "source_folder"),
+                        Config.PGet(i, "manifest_hidden", "1"),
+                        Config.PGet(i, "filters"),
+                        Config.PGet(i, "filter_mode", "or"),
+                        Config.PGet(i, "flat_output", "0"),
+                        Config.PGet(i, "recurse", "1"),
+                        Config.PGet(i, "since")
+                    }));
+                }
+                File.WriteAllLines(dlg.FileName, lines.ToArray(), System.Text.Encoding.UTF8);
+                MessageBox.Show(string.Format("{0} profile(s) exported.", Config.ProfileCount));
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show("Export failed: " + ex.Message);
             }
         }
 

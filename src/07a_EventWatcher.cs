@@ -83,7 +83,7 @@ namespace WatchBox
         void OnFolderEvent(int profileIndex, string path)
         {
             string fn = Path.GetFileName(path);
-            if (fn == "manifest.csv" || fn == "log.csv") return;
+            if (fn == ".manifest.csv" || fn == "manifest.csv" || fn == "log.csv") return;
 
             DateTime now = DateTime.Now;
             DateTime last;

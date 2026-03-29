@@ -13,12 +13,28 @@ namespace WatchBox
         const string MailHeader = "entry_id,sender_email,sender_name,subject,received_at,folder_path,body_path,msg_path,attachment_paths,mail_folder,body_text";
         const string FolderHeader = "item_id,file_name,file_path,folder_path,relative_path,file_size,modified_at";
 
+        // Resolve manifest path for reading (check both names, prefer hidden)
+        public static string ResolvePath(string outputRoot)
+        {
+            string hidden = Path.Combine(outputRoot, ".manifest.csv");
+            if (File.Exists(hidden)) return hidden;
+            string visible = Path.Combine(outputRoot, "manifest.csv");
+            if (File.Exists(visible)) return visible;
+            return hidden; // default for new files
+        }
+
+        // Get manifest path for writing (caller decides filename)
+        public static string WritePath(string outputRoot, bool hide)
+        {
+            return Path.Combine(outputRoot, hide ? ".manifest.csv" : "manifest.csv");
+        }
+
         // --- Load known IDs from manifest (for duplicate/change detection) ---
 
         public static HashSet<string> LoadIds(string outputRoot)
         {
             var ids = new HashSet<string>();
-            string path = Path.Combine(outputRoot, "manifest.csv");
+            string path = ResolvePath(outputRoot);
             if (!File.Exists(path)) return ids;
             foreach (var line in File.ReadAllLines(path, Encoding.UTF8))
             {
@@ -36,7 +52,7 @@ namespace WatchBox
         public static Dictionary<string, string[]> LoadRows(string outputRoot)
         {
             var rows = new Dictionary<string, string[]>();
-            string path = Path.Combine(outputRoot, "manifest.csv");
+            string path = ResolvePath(outputRoot);
             if (!File.Exists(path)) return rows;
             foreach (var line in File.ReadAllLines(path, Encoding.UTF8))
             {
@@ -54,7 +70,7 @@ namespace WatchBox
         public static Dictionary<string, FolderManifestRow> LoadFolderRows(string outputRoot)
         {
             var rows = new Dictionary<string, FolderManifestRow>();
-            string path = Path.Combine(outputRoot, "manifest.csv");
+            string path = ResolvePath(outputRoot);
             if (!File.Exists(path)) return rows;
             foreach (var line in File.ReadAllLines(path, Encoding.UTF8))
             {
@@ -79,9 +95,9 @@ namespace WatchBox
         public static void AppendMailRow(string outputRoot, string entryId,
             string senderEmail, string senderName, string subject, DateTime receivedAt,
             string folderPath, string bodyPath, string msgPath, string attachmentPaths,
-            string mailFolder, string bodyText)
+            string mailFolder, string bodyText, bool hide = true)
         {
-            var csvPath = Path.Combine(outputRoot, "manifest.csv");
+            var csvPath = WritePath(outputRoot, hide);
             if (!File.Exists(csvPath))
                 File.WriteAllText(csvPath, MailHeader + Environment.NewLine,
                     new UTF8Encoding(true));
@@ -106,9 +122,9 @@ namespace WatchBox
 
         public static void AppendFolderRow(string outputRoot, string itemId,
             string fileName, string filePath, string folderPath, string relativePath,
-            long fileSize, DateTime modifiedAt)
+            long fileSize, DateTime modifiedAt, bool hide = true)
         {
-            var csvPath = Path.Combine(outputRoot, "manifest.csv");
+            var csvPath = WritePath(outputRoot, hide);
             if (!File.Exists(csvPath))
                 File.WriteAllText(csvPath, FolderHeader + Environment.NewLine,
                     new UTF8Encoding(true));
@@ -129,7 +145,7 @@ namespace WatchBox
 
         public static void RemoveRows(string outputRoot, HashSet<string> removeIds)
         {
-            var csvPath = Path.Combine(outputRoot, "manifest.csv");
+            var csvPath = ResolvePath(outputRoot);
             if (!File.Exists(csvPath) || removeIds.Count == 0) return;
 
             var lines = File.ReadAllLines(csvPath, Encoding.UTF8);
@@ -147,9 +163,9 @@ namespace WatchBox
 
         // --- Rewrite entire folder manifest from scratch ---
 
-        public static void WriteFolderManifest(string outputRoot, List<FolderManifestRow> rows)
+        public static void WriteFolderManifest(string outputRoot, List<FolderManifestRow> rows, bool hide = true)
         {
-            var csvPath = Path.Combine(outputRoot, "manifest.csv");
+            var csvPath = WritePath(outputRoot, hide);
             var lines = new List<string> { FolderHeader };
             foreach (var r in rows)
             {
@@ -172,7 +188,7 @@ namespace WatchBox
         {
             var results = new List<string[]>();
             if (string.IsNullOrEmpty(outputRoot)) return results;
-            string path = Path.Combine(outputRoot, "manifest.csv");
+            string path = ResolvePath(outputRoot);
             if (!File.Exists(path)) return results;
 
             string q = (query ?? "").Trim().ToLower();
@@ -196,7 +212,7 @@ namespace WatchBox
         public static DateTime GetLatestMailDate(string outputRoot)
         {
             DateTime latest = DateTime.MinValue;
-            string path = Path.Combine(outputRoot, "manifest.csv");
+            string path = ResolvePath(outputRoot);
             if (!File.Exists(path)) return latest;
             foreach (var line in File.ReadAllLines(path, Encoding.UTF8))
             {
@@ -214,7 +230,7 @@ namespace WatchBox
 
         public static string DetectType(string outputRoot)
         {
-            string path = Path.Combine(outputRoot, "manifest.csv");
+            string path = ResolvePath(outputRoot);
             if (!File.Exists(path)) return "";
             using (var sr = new StreamReader(path, Encoding.UTF8))
             {
