@@ -17,6 +17,8 @@ namespace MailPull
         public volatile bool CancelRequested;
         HashSet<string> _exported;
         int _itemCount;
+        string _filterMode;
+        List<string> _filterWords;
 
         // --- Outlook connection ---
 
@@ -125,10 +127,18 @@ namespace MailPull
 
         // --- Export ---
 
-        public int Export(string exportRoot, string sinceDate, string filterAccount, string filterFolder)
+        public int Export(string exportRoot, string sinceDate, string filterAccount, string filterFolder,
+            string filterMode = "", string filterKeywords = "")
         {
             if (!Connect() || string.IsNullOrEmpty(exportRoot)) return 0;
             Directory.CreateDirectory(exportRoot);
+
+            // Parse keyword filters
+            _filterMode = (filterMode ?? "").ToLower() == "and" ? "and" : "or";
+            _filterWords = new List<string>();
+            if (!string.IsNullOrEmpty(filterKeywords))
+                foreach (var kw in filterKeywords.Split(';'))
+                    if (kw.Trim().Length > 0) _filterWords.Add(kw.Trim().ToLower());
 
             // Pre-load exported EntryIDs from manifest (skip without COM calls)
             var exported = new HashSet<string>();
@@ -215,12 +225,17 @@ namespace MailPull
                             string eid = (string)item.EntryID;
                             if (!_exported.Contains(eid))
                             {
+                                // Keyword filter check
+                                if (_filterWords.Count > 0 && !MatchesFilter(item))
+                                    goto SkipItem;
+
                                 ExportMail(item, folderRoot, exportRoot, smtp);
                                 _exported.Add(eid);
                                 total++;
                                 if (ProgressChanged != null)
                                     ProgressChanged(total, (string)item.Subject);
                             }
+                            SkipItem:;
                         }
                     }
                     catch { }
@@ -339,6 +354,33 @@ namespace MailPull
                 File.AppendAllText(csvPath, line + Environment.NewLine, new UTF8Encoding(true));
             }
             catch { }
+        }
+
+        // --- Keyword filter ---
+
+        bool MatchesFilter(dynamic mail)
+        {
+            if (_filterWords.Count == 0) return true;
+
+            string subject = ""; string body = ""; string sender = "";
+            try { subject = ((string)mail.Subject ?? "").ToLower(); } catch { }
+            try { body = ((string)mail.Body ?? "").ToLower(); } catch { }
+            try { sender = ((string)mail.SenderEmailAddress ?? "").ToLower(); } catch { }
+
+            string text = subject + "\n" + body + "\n" + sender;
+
+            if (_filterMode == "and")
+            {
+                foreach (var kw in _filterWords)
+                    if (!text.Contains(kw)) return false;
+                return true;
+            }
+            else
+            {
+                foreach (var kw in _filterWords)
+                    if (text.Contains(kw)) return true;
+                return false;
+            }
         }
 
         // --- Search manifest ---

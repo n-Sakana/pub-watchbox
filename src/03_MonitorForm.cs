@@ -145,8 +145,9 @@ namespace MailPull
                             _status.Text = string.Format("[{0}] {1}: {2}",
                                 Config.PGet(i, "name", "Profile " + i), c, s);
                         }));
-                    total += ex.Export(root, Config.PGet(i, "export_since"),
-                        Config.PGet(i, "account"), Config.PGet(i, "folder_path"));
+                    total += ex.Export(root, Config.PGet(i, "since"),
+                        Config.PGet(i, "account"), Config.PGet(i, "folder_path"),
+                        Config.PGet(i, "filter_mode"), Config.PGet(i, "filters"));
                     if (ex.CancelRequested) break;
                 }
                 return total;
@@ -232,8 +233,9 @@ namespace MailPull
                     string root = Config.PGet(i, "export_root");
                     if (string.IsNullOrEmpty(root)) continue;
                     var ex = new Exporter();
-                    total += ex.Export(root, Config.PGet(i, "export_since"),
-                        Config.PGet(i, "account"), Config.PGet(i, "folder_path"));
+                    total += ex.Export(root, Config.PGet(i, "since"),
+                        Config.PGet(i, "account"), Config.PGet(i, "folder_path"),
+                        Config.PGet(i, "filter_mode"), Config.PGet(i, "filters"));
                 }
                 return total;
             },

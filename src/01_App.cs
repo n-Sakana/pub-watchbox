@@ -64,8 +64,8 @@ namespace MailPull
         public static void Remove(string key) { _data.Remove(key); }
 
         // --- Profile support ---
-        // Keys: p0_name, p0_account, p0_folder_path, p0_export_root, p0_export_since, p0_poll_seconds
-        static readonly string[] ProfileKeys = { "name", "account", "folder_path", "export_root", "export_since", "poll_seconds" };
+        // Keys: p0_name, p0_account, p0_folder_path, p0_since, p0_filter_mode, p0_filters, p0_export_root, p0_poll_seconds
+        static readonly string[] ProfileKeys = { "name", "account", "folder_path", "since", "filter_mode", "filters", "export_root", "poll_seconds" };
 
         public static int ProfileCount
         {
@@ -121,7 +121,7 @@ namespace MailPull
             PSet(0, "account", Get("account"));
             PSet(0, "folder_path", Get("folder_path"));
             PSet(0, "export_root", root);
-            PSet(0, "export_since", Get("export_since"));
+            PSet(0, "since", Get("export_since"));
             PSet(0, "poll_seconds", Get("poll_seconds", "60"));
 
             // Clean old keys
