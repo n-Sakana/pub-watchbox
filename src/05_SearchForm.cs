@@ -153,12 +153,26 @@ namespace MailPull
                 DisplayMemberBinding = new Binding("[1]"),
                 HeaderContainerStyle = LeftAlignStyle()
             });
+            var attachCol = new GridViewColumn
+            {
+                Width = 32,
+                DisplayMemberBinding = new Binding("[2]"),
+                HeaderContainerStyle = LeftAlignStyle()
+            };
+            var attachHeader = new TextBlock
+            {
+                Text = "\uE723",
+                FontFamily = new FontFamily("Segoe MDL2 Assets"),
+                FontSize = 12
+            };
+            attachCol.Header = attachHeader;
+            gridView.Columns.Add(attachCol);
             _mailList.View = gridView;
             _mailList.SelectionChanged += OnMailSelected;
             _mailList.SizeChanged += (s, e) =>
             {
-                if (gridView.Columns.Count > 1)
-                    gridView.Columns[1].Width = _mailList.ActualWidth - 100;
+                if (gridView.Columns.Count > 2)
+                    gridView.Columns[1].Width = _mailList.ActualWidth - 132;
             };
             Grid.SetColumn(_mailList, 2);
             mainGrid.Children.Add(_mailList);
@@ -399,7 +413,9 @@ namespace MailPull
 
                 _currentRecords.Add(r);
                 string date = r.Length > 4 ? (r[4].Length >= 10 ? r[4].Substring(0, 10) : r[4]) : "";
-                _mailList.Items.Add(new[] { date, r.Length > 3 ? r[3] : "" });
+                string att = r.Length > 8 && !string.IsNullOrEmpty(r[8])
+                    ? r[8].Split('|').Length.ToString() : "";
+                _mailList.Items.Add(new[] { date, r.Length > 3 ? r[3] : "", att });
             }
 
             _statusText.Text = string.Format("{0} mail(s)", _currentRecords.Count);
