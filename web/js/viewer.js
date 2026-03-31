@@ -77,16 +77,16 @@ const Viewer = {
         const isMail = this.currentType === 'mail';
 
         const colDefs = isMail ? [
-            { field: 'date', headerName: 'Date', width: 100, sort: 'desc' },
-            { field: 'sender', headerName: 'From', width: 140 },
-            { field: 'subject', headerName: 'Subject', flex: 1 },
-            { field: 'attachCount', headerName: '#', width: 50 }
+            { field: 'date', headerName: 'Date', maxWidth: 110, sort: 'desc' },
+            { field: 'sender', headerName: 'From', maxWidth: 200 },
+            { field: 'subject', headerName: 'Subject', maxWidth: 400 },
+            { field: 'attachCount', headerName: '#', maxWidth: 60 }
         ] : [
-            { field: 'name', headerName: 'Name', flex: 1 },
-            { field: 'relativePath', headerName: 'Path', flex: 1 },
-            { field: 'size', headerName: 'Size', width: 90,
+            { field: 'name', headerName: 'Name', maxWidth: 300 },
+            { field: 'relativePath', headerName: 'Path', maxWidth: 300 },
+            { field: 'size', headerName: 'Size', maxWidth: 100,
               valueFormatter: (p) => this.formatSize(p.value) },
-            { field: 'modified', headerName: 'Modified', width: 140 }
+            { field: 'modified', headerName: 'Modified', maxWidth: 160 }
         ];
 
         const rowData = this.manifestRows.map((r, i) => {
@@ -130,8 +130,7 @@ const Viewer = {
             doesExternalFilterPass: (node) => this.passesFilter(node),
             onGridReady: () => { this.updateStatus(); },
             onFirstDataRendered: (params) => {
-                params.api.sizeColumnsToFit();
-                // Select first row and focus grid for keyboard nav
+                this.fitColumns(params.api);
                 const firstNode = params.api.getDisplayedRowAtIndex(0);
                 if (firstNode) firstNode.setSelected(true);
             },
@@ -662,6 +661,20 @@ const Viewer = {
     },
 
     // --- Helpers ---
+
+    fitColumns(api) {
+        if (!api) api = this.gridApi;
+        if (!api) return;
+        // Auto-size to content first
+        api.autoSizeAllColumns();
+        // If total columns narrower than grid, stretch to fill
+        const allCols = api.getColumns();
+        if (!allCols) return;
+        let totalW = 0;
+        allCols.forEach(c => totalW += c.getActualWidth());
+        const gridW = document.getElementById('gridContainer').clientWidth;
+        if (totalW < gridW) api.sizeColumnsToFit();
+    },
 
     formatSize(bytes) {
         if (bytes < 1024) return bytes + ' B';

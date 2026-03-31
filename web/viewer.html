@@ -134,7 +134,7 @@ function initResizer(resizerId, panelId, minW, invert) {
             const delta = invert ? startX - e.clientX : e.clientX - startX;
             panel.style.width = Math.max(minW, startW + delta) + 'px';
             panel.style.flex = 'none';
-            if (Viewer.gridApi) Viewer.gridApi.sizeColumnsToFit();
+            Viewer.fitColumns();
         };
         const onUp = () => {
             resizer.classList.remove('active');
@@ -148,7 +148,7 @@ function initResizer(resizerId, panelId, minW, invert) {
 }
 initResizer('resizer1', 'leftPanel', 120, false);
 initResizer('resizer2', 'rightPanel', 180, true);
-window.addEventListener('resize', () => { if (Viewer.gridApi) Viewer.gridApi.sizeColumnsToFit(); });
+window.addEventListener('resize', () => { Viewer.fitColumns(); });
 </script>
 </body>
 </html>
