@@ -279,15 +279,77 @@ const Viewer = {
     },
 
     onAttachmentsLoaded(data) {
-        const el = document.getElementById('attachList');
-        el.innerHTML = '';
-        (data.files || []).forEach(f => {
-            const div = document.createElement('div');
-            div.className = 'attach-item';
-            div.textContent = f.name;
-            div.ondblclick = () => Bridge.send('openFile', { path: f.path });
-            el.appendChild(div);
+        this._attachFiles = data.files || [];
+
+        // Build tab bar: Body + one tab per attachment
+        const tabBar = document.getElementById('mailTabBar');
+        tabBar.innerHTML = '';
+
+        const bodyTab = document.createElement('button');
+        bodyTab.className = 'mail-tab active';
+        bodyTab.dataset.tab = 'body';
+        bodyTab.textContent = 'Body';
+        bodyTab.onclick = () => this.switchMailTab('body');
+        bodyTab.ondblclick = null;
+        tabBar.appendChild(bodyTab);
+
+        this._attachFiles.forEach((f, i) => {
+            const tab = document.createElement('button');
+            tab.className = 'mail-tab';
+            tab.dataset.tab = 'attach-' + i;
+            tab.textContent = f.name;
+            tab.onclick = () => this.switchMailTab('attach-' + i);
+            tab.ondblclick = () => Bridge.send('openFile', { path: f.path });
+            tab.title = 'Click: preview / Double-click: open';
+            tabBar.appendChild(tab);
         });
+
+        // Show body tab by default
+        this.switchMailTab('body');
+    },
+
+    switchMailTab(tabId) {
+        // Update tab styles
+        document.querySelectorAll('#mailTabBar .mail-tab').forEach(t => {
+            t.classList.toggle('active', t.dataset.tab === tabId);
+        });
+
+        const bodyPanel = document.getElementById('mailBodyPanel');
+        const previewPanel = document.getElementById('attachPreviewPanel');
+
+        if (tabId === 'body') {
+            bodyPanel.style.display = '';
+            bodyPanel.classList.remove('hidden');
+            previewPanel.style.display = 'none';
+            previewPanel.classList.add('hidden');
+            this._attachPreviewActive = false;
+        } else {
+            bodyPanel.style.display = 'none';
+            bodyPanel.classList.add('hidden');
+            previewPanel.classList.remove('hidden');
+            previewPanel.style.display = 'flex';
+
+            const idx = parseInt(tabId.replace('attach-', ''));
+            const f = this._attachFiles[idx];
+            if (!f) return;
+
+            const container = document.getElementById('attachPreviewContainer');
+            container.innerHTML = '<div class="preview-placeholder">Loading...</div>';
+
+            const ext = (f.name.split('.').pop() || '').toLowerCase();
+            const previewType = this.getPreviewType(ext);
+
+            if (previewType === 'none') {
+                container.innerHTML = '<div class="preview-placeholder">No preview for .' +
+                    this.esc(ext) + '</div>';
+                return;
+            }
+
+            this._attachPreviewActive = true;
+            Bridge.send('getFilePreview', {
+                filePath: f.path, fileName: f.name, previewType: previewType
+            });
+        }
     },
 
     // --- Folder detail + preview ---
@@ -355,7 +417,10 @@ const Viewer = {
     },
 
     onFilePreview(data) {
-        const container = document.getElementById('previewContainer');
+        // Route to attachment preview or folder preview
+        const containerId = this._attachPreviewActive
+            ? 'attachPreviewContainer' : 'previewContainer';
+        const container = document.getElementById(containerId);
         container.innerHTML = '';
 
         switch (data.type) {
@@ -454,14 +519,46 @@ const Viewer = {
             for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
 
             const workbook = XLSX.read(bytes, { type: 'array' });
-            const sheetName = workbook.SheetNames[0];
-            const sheet = workbook.Sheets[sheetName];
-            const html = XLSX.utils.sheet_to_html(sheet, { editable: false });
 
-            const wrapper = document.createElement('div');
-            wrapper.style.cssText = 'flex:1;overflow:auto;padding:8px;';
-            wrapper.innerHTML = html;
-            container.appendChild(wrapper);
+            // Tab bar for multiple sheets
+            if (workbook.SheetNames.length > 1) {
+                const tabBar = document.createElement('div');
+                tabBar.style.cssText = 'display:flex;gap:0;border-bottom:1px solid oklch(var(--bc) / 0.15);flex-shrink:0;overflow-x:auto;';
+                container.appendChild(tabBar);
+
+                const contentArea = document.createElement('div');
+                contentArea.style.cssText = 'flex:1;overflow:auto;padding:8px;';
+                container.appendChild(contentArea);
+
+                const showSheet = (name) => {
+                    const sheet = workbook.Sheets[name];
+                    contentArea.innerHTML = XLSX.utils.sheet_to_html(sheet, { editable: false });
+                    tabBar.querySelectorAll('.sheet-tab').forEach(t => {
+                        t.style.borderBottom = t.dataset.name === name ? '2px solid oklch(var(--p))' : '2px solid transparent';
+                        t.style.color = t.dataset.name === name ? 'oklch(var(--p))' : '';
+                    });
+                };
+
+                workbook.SheetNames.forEach((name, i) => {
+                    const tab = document.createElement('button');
+                    tab.className = 'sheet-tab';
+                    tab.dataset.name = name;
+                    tab.textContent = name;
+                    tab.style.cssText = 'padding:6px 14px;font-size:12px;background:none;border:none;' +
+                        'border-bottom:2px solid transparent;cursor:pointer;white-space:nowrap;';
+                    tab.onclick = () => showSheet(name);
+                    tabBar.appendChild(tab);
+                });
+
+                showSheet(workbook.SheetNames[0]);
+            } else {
+                // Single sheet, no tabs
+                const wrapper = document.createElement('div');
+                wrapper.style.cssText = 'flex:1;overflow:auto;padding:8px;';
+                wrapper.innerHTML = XLSX.utils.sheet_to_html(
+                    workbook.Sheets[workbook.SheetNames[0]], { editable: false });
+                container.appendChild(wrapper);
+            }
         } catch (e) {
             container.innerHTML = '<div class="preview-placeholder">Failed to parse Excel file</div>';
         }
