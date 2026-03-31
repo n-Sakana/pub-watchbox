@@ -134,6 +134,7 @@ function initResizer(resizerId, panelId, minW, invert) {
             const delta = invert ? startX - e.clientX : e.clientX - startX;
             panel.style.width = Math.max(minW, startW + delta) + 'px';
             panel.style.flex = 'none';
+            if (Viewer.gridApi) Viewer.gridApi.sizeColumnsToFit();
         };
         const onUp = () => {
             resizer.classList.remove('active');
