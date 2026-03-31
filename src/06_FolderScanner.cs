@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.IO.Compression;
 
 namespace WatchBox
 {
@@ -13,6 +14,7 @@ namespace WatchBox
         string _filterMode;
         List<string> _filterWords;
         bool _flatOutput;
+        bool _autoUnzip;
 
         void ParseFilters(Dictionary<string, string> config)
         {
@@ -35,6 +37,7 @@ namespace WatchBox
                     if (kw.Trim().Length > 0) _filterWords.Add(kw.Trim().ToLower());
 
             _flatOutput = config.ContainsKey("flat_output") && config["flat_output"] == "1";
+            _autoUnzip = config.ContainsKey("auto_unzip") && config["auto_unzip"] == "1";
         }
 
         bool PassesFilter(FileInfo fi)
@@ -108,6 +111,16 @@ namespace WatchBox
                     Directory.CreateDirectory(destDir);
                     File.Copy(filePath, destPath, true);
 
+                    // Auto-extract zip files: extract then remove the zip
+                    if (_autoUnzip && fi.Extension.ToLower() == ".zip")
+                    {
+                        if (TryExtractZip(destPath, destDir))
+                        {
+                            try { File.Delete(destPath); } catch { }
+                            continue; // skip adding zip to results
+                        }
+                    }
+
                     count++;
                     results.Add(new ScanResult {
                         ItemId = itemId,
@@ -168,6 +181,47 @@ namespace WatchBox
                 catch { }
             }
             return results;
+        }
+
+        // --- Zip extraction ---
+
+        static bool TryExtractZip(string zipPath, string destDir)
+        {
+            string extractDir = Path.Combine(destDir,
+                Path.GetFileNameWithoutExtension(zipPath));
+            try
+            {
+                using (var archive = ZipFile.OpenRead(zipPath))
+                {
+                    // Check first entry for encryption (password protection)
+                    foreach (var entry in archive.Entries)
+                    {
+                        if (entry.Length == 0) continue;
+                        try
+                        {
+                            using (var stream = entry.Open())
+                                stream.ReadByte();
+                        }
+                        catch (InvalidDataException)
+                        {
+                            return false; // password-protected
+                        }
+                        break;
+                    }
+
+                    foreach (var entry in archive.Entries)
+                    {
+                        if (string.IsNullOrEmpty(entry.Name)) continue;
+                        string entryDest = Path.Combine(extractDir, entry.FullName);
+                        string entryDir = Path.GetDirectoryName(entryDest);
+                        Directory.CreateDirectory(entryDir);
+                        try { entry.ExtractToFile(entryDest, true); }
+                        catch { }
+                    }
+                }
+                return true;
+            }
+            catch { return false; }
         }
 
         // --- Common helpers ---

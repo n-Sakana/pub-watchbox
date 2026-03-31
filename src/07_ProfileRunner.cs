@@ -119,7 +119,7 @@ namespace WatchBox
             var config = new Dictionary<string, string>();
             string[] keys = { "output_root", "account", "outlook_folder", "since",
                 "filter_mode", "filters", "flat_output", "source_folder",
-                "recurse", "type", "short_dirname" };
+                "recurse", "type", "short_dirname", "auto_unzip" };
             foreach (var k in keys)
                 config[k] = Config.PGet(profileIndex, k);
             return config;

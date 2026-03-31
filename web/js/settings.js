@@ -39,8 +39,8 @@ const Settings = {
         const sel = document.getElementById('profileSelect');
         sel.innerHTML = '';
         this.profiles.forEach((p, i) => {
-            const opt = document.createElement('option');
-            opt.value = i;
+            const opt = document.createElement('fluent-option');
+            opt.value = String(i);
             opt.textContent = p.name || ('Profile ' + (i + 1));
             sel.appendChild(opt);
         });
@@ -51,6 +51,7 @@ const Settings = {
     onProfileChange() {
         this.saveToModel();
         const sel = document.getElementById('profileSelect');
+        sel.blur(); // close native dropdown
         this.currentIdx = parseInt(sel.value);
         this.loadProfile(this.currentIdx);
         // Reload folders for selected account
@@ -65,8 +66,10 @@ const Settings = {
         document.getElementById('fName').value = p.name || '';
         document.getElementById('fType').value = p.type || 'mail';
         document.getElementById('fOutputRoot').value = p.output_root || '';
-        document.getElementById('fFlat').checked = p.flat_output === '1';
-        document.getElementById('fShortDirname').checked = p.short_dirname === '1';
+        const fFlat = document.getElementById('fFlat');
+        const fShort = document.getElementById('fShortDirname');
+        if (p.flat_output === '1') fFlat.setAttribute('checked', ''); else fFlat.removeAttribute('checked');
+        if (p.short_dirname === '1') fShort.setAttribute('checked', ''); else fShort.removeAttribute('checked');
 
         // Mail source
         this.selectOption('fAccount', p.account || '');
@@ -74,20 +77,25 @@ const Settings = {
 
         // Folder source
         document.getElementById('fSourceFolder').value = p.source_folder || '';
-        document.getElementById('fRecurse').checked = p.recurse !== '0';
+        const fRec = document.getElementById('fRecurse');
+        const fUnzip = document.getElementById('fAutoUnzip');
+        if (p.recurse !== '0') fRec.setAttribute('checked', ''); else fRec.removeAttribute('checked');
+        if (p.auto_unzip === '1') fUnzip.setAttribute('checked', ''); else fUnzip.removeAttribute('checked');
 
         // Filter
         document.getElementById('fSince').value = p.since || '';
         const mode = p.filter_mode === 'and' ? 'and' : 'or';
-        document.querySelector(`input[name="filterMode"][value="${mode}"]`).checked = true;
+        const radioGroup = document.getElementById('filterModeGroup');
+        if (radioGroup) radioGroup.value = mode;
 
         this.filters = (p.filters || '').split(';').filter(k => k.trim().length > 0);
         this.rebuildFilterList();
 
         // Monitoring
-        document.getElementById('fNotify').checked = p.notify !== '0';
-        document.getElementById('fLog').checked = p.log_enabled !== '0';
-        document.getElementById('fManifestHidden').checked = p.manifest_hidden !== '0';
+        const setChk = (id, val) => { const el = document.getElementById(id); if (val) el.setAttribute('checked', ''); else el.removeAttribute('checked'); };
+        setChk('fNotify', p.notify !== '0');
+        setChk('fLog', p.log_enabled !== '0');
+        setChk('fManifestHidden', p.manifest_hidden !== '0');
 
         // Type toggle
         this.onTypeChange();
@@ -100,22 +108,25 @@ const Settings = {
         p.name = document.getElementById('fName').value;
         p.type = document.getElementById('fType').value;
         p.output_root = document.getElementById('fOutputRoot').value;
-        p.flat_output = document.getElementById('fFlat').checked ? '1' : '0';
-        p.short_dirname = document.getElementById('fShortDirname').checked ? '1' : '0';
+        p.flat_output = document.getElementById('fFlat').hasAttribute('checked') ? '1' : '0';
+        p.short_dirname = document.getElementById('fShortDirname').hasAttribute('checked') ? '1' : '0';
 
         p.account = document.getElementById('fAccount').value;
         p.outlook_folder = document.getElementById('fOutlookFolder').value;
 
         p.source_folder = document.getElementById('fSourceFolder').value;
-        p.recurse = document.getElementById('fRecurse').checked ? '1' : '0';
+        p.recurse = document.getElementById('fRecurse').hasAttribute('checked') ? '1' : '0';
+        p.auto_unzip = document.getElementById('fAutoUnzip').hasAttribute('checked') ? '1' : '0';
 
         p.since = document.getElementById('fSince').value;
-        p.filter_mode = document.querySelector('input[name="filterMode"]:checked').value;
+        const rg = document.getElementById('filterModeGroup');
+        p.filter_mode = rg ? (rg.value || 'or') : 'or';
         p.filters = this.filters.join(';');
 
-        p.notify = document.getElementById('fNotify').checked ? '1' : '0';
-        p.log_enabled = document.getElementById('fLog').checked ? '1' : '0';
-        p.manifest_hidden = document.getElementById('fManifestHidden').checked ? '1' : '0';
+        const chk = (id) => document.getElementById(id).hasAttribute('checked') ? '1' : '0';
+        p.notify = chk('fNotify');
+        p.log_enabled = chk('fLog');
+        p.manifest_hidden = chk('fManifestHidden');
 
         // Update combo text
         const sel = document.getElementById('profileSelect');
@@ -129,6 +140,9 @@ const Settings = {
         const type = document.getElementById('fType').value;
         document.body.className = document.body.className
             .replace(/type-\w+/, '') + ' type-' + type;
+        // Short names only for mail
+        const sdr = document.getElementById('fShortDirname');
+        if (sdr) sdr.style.display = type === 'mail' ? '' : 'none';
     },
 
     // --- Outlook data ---
@@ -136,9 +150,9 @@ const Settings = {
     onAccountsLoaded(data) {
         const sel = document.getElementById('fAccount');
         const current = sel.value;
-        sel.innerHTML = '<option value="">(All)</option>';
+        sel.innerHTML = '<fluent-option value="">(All)</fluent-option>';
         (data.accounts || []).forEach(a => {
-            const opt = document.createElement('option');
+            const opt = document.createElement('fluent-option');
             opt.value = a;
             opt.textContent = a;
             sel.appendChild(opt);
@@ -154,9 +168,9 @@ const Settings = {
         const sel = document.getElementById('fOutlookFolder');
         const current = sel.value ||
             (this.profiles[this.currentIdx] || {}).outlook_folder || '';
-        sel.innerHTML = '<option value="">(All)</option>';
+        sel.innerHTML = '<fluent-option value="">(All)</fluent-option>';
         (data.folders || []).forEach(f => {
-            const opt = document.createElement('option');
+            const opt = document.createElement('fluent-option');
             opt.value = f.path;
             opt.textContent = f.display;
             sel.appendChild(opt);
@@ -239,7 +253,7 @@ const Settings = {
 
     removeProfile() {
         if (this.profiles.length <= 1) {
-            alert('Cannot remove the last profile.');
+            showModal('Cannot remove the last profile.', false);
             return;
         }
         const idx = this.currentIdx;
@@ -255,14 +269,6 @@ const Settings = {
 
     save() {
         this.saveToModel();
-        // Validate
-        for (let i = 0; i < this.profiles.length; i++) {
-            if (!this.profiles[i].output_root || !this.profiles[i].output_root.trim()) {
-                alert('Profile "' + (this.profiles[i].name || 'Profile ' + (i+1))
-                    + '" needs an output folder.');
-                return;
-            }
-        }
         Bridge.send('saveConfig', { profiles: this.profiles });
     },
 
@@ -289,7 +295,7 @@ const Settings = {
             sel.selectedIndex = this.profiles.length - 1;
             this.currentIdx = sel.selectedIndex;
             this.loadProfile(this.currentIdx);
-            alert(data.profiles.length + ' profile(s) imported.');
+            showModal(data.profiles.length + ' profile(s) imported.', false);
         }
     },
 
@@ -298,8 +304,8 @@ const Settings = {
         Bridge.send('exportCsv', { profiles: this.profiles });
     },
 
-    resetAll() {
-        if (!confirm('All profiles will be deleted. Continue?')) return;
+    async resetAll() {
+        if (!await showModal('All profiles will be deleted. Continue?', true)) return;
         this.profiles = [{
             name: 'Default', type: 'mail', output_root: '', account: '',
             outlook_folder: '', source_folder: '', recurse: '1', since: '',
@@ -316,12 +322,8 @@ const Settings = {
 
     selectOption(id, value) {
         const sel = document.getElementById(id);
-        for (let i = 0; i < sel.options.length; i++) {
-            if (sel.options[i].value.toLowerCase() === (value || '').toLowerCase()) {
-                sel.selectedIndex = i;
-                return;
-            }
-        }
+        // Fluent select: set value directly
+        sel.value = value || '';
     }
 };
 

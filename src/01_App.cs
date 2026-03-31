@@ -86,7 +86,9 @@ namespace WatchBox
             // Manifest visibility
             "manifest_hidden",
             // Mail directory naming
-            "short_dirname"
+            "short_dirname",
+            // Folder: auto-extract zip files
+            "auto_unzip"
         };
 
         public static int ProfileCount
@@ -127,6 +129,7 @@ namespace WatchBox
             PSet(idx, "recurse", "1");
             PSet(idx, "manifest_hidden", "1");
             PSet(idx, "short_dirname", "0");
+            PSet(idx, "auto_unzip", "0");
             return idx;
         }
 

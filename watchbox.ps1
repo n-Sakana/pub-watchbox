@@ -30,6 +30,8 @@ $refs = @(
     [System.Xaml.XamlReader].Assembly.Location
     'Microsoft.CSharp'
     'System.Drawing'
+    'System.IO.Compression'
+    'System.IO.Compression.FileSystem'
 )
 
 # Add WebView2 references if available

@@ -25,22 +25,26 @@ const Viewer = {
         const sel = document.getElementById('profileSelect');
         sel.innerHTML = '';
         this.profiles.forEach((p, i) => {
-            const opt = document.createElement('option');
-            opt.value = i;
+            const opt = document.createElement('fluent-option');
+            opt.value = String(i);
             opt.textContent = p.name + ' (' + p.type + ')';
             sel.appendChild(opt);
         });
         if (this.profiles.length > 0) {
-            sel.selectedIndex = 0;
-            this.onProfileChange();
+            sel.value = '0';
+            this.loadProfile(0);
         }
     },
 
     onProfileChange() {
-        const idx = parseInt(document.getElementById('profileSelect').value);
+        const sel = document.getElementById('profileSelect');
+        const idx = parseInt(sel.value || sel.selectedIndex || 0);
+        this.loadProfile(idx);
+    },
+
+    loadProfile(idx) {
         const profile = this.profiles[idx];
         if (!profile) return;
-
         this.currentType = profile.type || 'mail';
         this.selectedFolder = '';
         this.clearDetail();
@@ -125,7 +129,21 @@ const Viewer = {
             isExternalFilterPresent: () => this.hasFilter(),
             doesExternalFilterPass: (node) => this.passesFilter(node),
             onGridReady: () => { this.updateStatus(); },
-            onFirstDataRendered: (params) => { params.api.sizeColumnsToFit(); }
+            onFirstDataRendered: (params) => {
+                params.api.sizeColumnsToFit();
+                // Select first row and focus grid for keyboard nav
+                const firstNode = params.api.getDisplayedRowAtIndex(0);
+                if (firstNode) firstNode.setSelected(true);
+            },
+            // Keyboard navigation: ensure selection follows focus
+            navigateToNextCell: (params) => {
+                const nextCell = params.nextCellPosition;
+                if (nextCell) {
+                    const node = this.gridApi.getDisplayedRowAtIndex(nextCell.rowIndex);
+                    if (node) node.setSelected(true);
+                }
+                return nextCell;
+            }
         };
 
         try {
@@ -250,17 +268,21 @@ const Viewer = {
     // --- Detail panel ---
 
     clearDetail() {
-        document.getElementById('emptyState').classList.remove('hidden');
-        document.getElementById('mailDetail').classList.add('hidden');
-        document.getElementById('folderDetail').classList.add('hidden');
+        document.getElementById('emptyState').style.display='';
+        document.getElementById('mailDetail').style.display='none';
+        document.getElementById('folderDetail').style.display='none';
+        document.getElementById('attachPreviewPanel').style.display='none';
+        this._attachPreviewActive = false;
     },
 
     // --- Mail detail ---
 
     showMailDetail(r) {
-        document.getElementById('emptyState').classList.add('hidden');
-        document.getElementById('mailDetail').classList.remove('hidden');
-        document.getElementById('folderDetail').classList.add('hidden');
+        document.getElementById('emptyState').style.display='none';
+        document.getElementById('mailDetail').style.display='flex';
+        document.getElementById('folderDetail').style.display='none';
+        document.getElementById('attachPreviewPanel').style.display='none';
+        this._attachPreviewActive = false;
 
         document.getElementById('mailHeader').innerHTML =
             '<b>From:</b> ' + this.esc(r.sender_name || '') +
@@ -279,91 +301,70 @@ const Viewer = {
     },
 
     onAttachmentsLoaded(data) {
-        this._attachFiles = data.files || [];
-
-        // Build tab bar: Body + one tab per attachment
-        const tabBar = document.getElementById('mailTabBar');
-        tabBar.innerHTML = '';
-
-        const bodyTab = document.createElement('button');
-        bodyTab.className = 'mail-tab active';
-        bodyTab.dataset.tab = 'body';
-        bodyTab.textContent = 'Body';
-        bodyTab.onclick = () => this.switchMailTab('body');
-        bodyTab.ondblclick = null;
-        tabBar.appendChild(bodyTab);
-
-        this._attachFiles.forEach((f, i) => {
-            const tab = document.createElement('button');
-            tab.className = 'mail-tab';
-            tab.dataset.tab = 'attach-' + i;
-            tab.textContent = f.name;
-            tab.onclick = () => this.switchMailTab('attach-' + i);
-            tab.ondblclick = () => Bridge.send('openFile', { path: f.path });
-            tab.title = 'Click: preview / Double-click: open';
-            tabBar.appendChild(tab);
+        const el = document.getElementById('attachList');
+        el.innerHTML = '';
+        (data.files || []).forEach(f => {
+            const div = document.createElement('div');
+            div.className = 'attach-item';
+            div.textContent = f.name;
+            div.onclick = () => this.previewAttachment(f.name, f.path);
+            div.ondblclick = () => Bridge.send('openFile', { path: f.path });
+            el.appendChild(div);
         });
-
-        // Show body tab by default
-        this.switchMailTab('body');
     },
 
-    switchMailTab(tabId) {
-        // Update tab styles
-        document.querySelectorAll('#mailTabBar .mail-tab').forEach(t => {
-            t.classList.toggle('active', t.dataset.tab === tabId);
-        });
+    _previewedAttachPath: null,
 
-        const bodyPanel = document.getElementById('mailBodyPanel');
-        const previewPanel = document.getElementById('attachPreviewPanel');
+    previewAttachment(name, path) {
+        this._previewedAttachPath = path;
+        // Hide mail detail, show full-panel preview
+        document.getElementById('mailDetail').style.display='none';
+        const panel = document.getElementById('attachPreviewPanel');
+        panel.style.display='flex';
+        document.getElementById('attachPreviewName').textContent = name;
 
-        if (tabId === 'body') {
-            bodyPanel.style.display = '';
-            bodyPanel.classList.remove('hidden');
-            previewPanel.style.display = 'none';
-            previewPanel.classList.add('hidden');
-            this._attachPreviewActive = false;
-        } else {
-            bodyPanel.style.display = 'none';
-            bodyPanel.classList.add('hidden');
-            previewPanel.classList.remove('hidden');
-            previewPanel.style.display = 'flex';
+        const container = document.getElementById('attachPreviewContainer');
+        container.innerHTML = '<div class="preview-placeholder">Loading...</div>';
 
-            const idx = parseInt(tabId.replace('attach-', ''));
-            const f = this._attachFiles[idx];
-            if (!f) return;
-
-            const container = document.getElementById('attachPreviewContainer');
-            container.innerHTML = '<div class="preview-placeholder">Loading...</div>';
-
-            const ext = (f.name.split('.').pop() || '').toLowerCase();
-            const previewType = this.getPreviewType(ext);
-
-            if (previewType === 'none') {
-                container.innerHTML = '<div class="preview-placeholder">No preview for .' +
-                    this.esc(ext) + '</div>';
-                return;
-            }
-
-            this._attachPreviewActive = true;
-            Bridge.send('getFilePreview', {
-                filePath: f.path, fileName: f.name, previewType: previewType
-            });
+        const ext = (name.split('.').pop() || '').toLowerCase();
+        const previewType = this.getPreviewType(ext);
+        if (previewType === 'none') {
+            container.innerHTML = '<div class="preview-placeholder">No preview for .' +
+                this.esc(ext) + '</div>';
+            return;
         }
+        this._attachPreviewActive = true;
+        Bridge.send('getFilePreview', { filePath: path, fileName: name, previewType: previewType });
+    },
+
+    closeAttachPreview() {
+        document.getElementById('attachPreviewPanel').style.display='none';
+        document.getElementById('mailDetail').style.display='flex';
+        this._attachPreviewActive = false;
+    },
+
+    openPreviewedAttach() {
+        if (this._previewedAttachPath)
+            Bridge.send('openFile', { path: this._previewedAttachPath });
     },
 
     // --- Folder detail + preview ---
 
     showFolderDetail(r) {
-        document.getElementById('emptyState').classList.add('hidden');
-        document.getElementById('mailDetail').classList.add('hidden');
-        document.getElementById('folderDetail').classList.remove('hidden');
+        document.getElementById('emptyState').style.display='none';
+        document.getElementById('mailDetail').style.display='none';
+        document.getElementById('folderDetail').style.display='flex';
 
-        document.getElementById('fileInfo').innerHTML =
-            '<b>Name:</b> ' + this.esc(r.file_name || '') +
+        const fi = document.getElementById('fileInfo');
+        fi.innerHTML = '<b>Name:</b> ' + this.esc(r.file_name || '') +
             ' &nbsp; <b>Size:</b> ' + this.formatSize(parseInt(r.file_size) || 0) +
-            ' &nbsp; <b>Modified:</b> ' + this.esc(r.modified_at || '') +
-            ' &nbsp; <button class="btn btn-xs btn-ghost ml-2" onclick="Viewer.openCurrentFile()">Open</button>';
+            ' &nbsp; <b>Modified:</b> ' + this.esc(r.modified_at || '');
+        const openBtn = document.createElement('fluent-button');
+        openBtn.setAttribute('size', 'small');
+        openBtn.textContent = 'Open';
+        openBtn.style.marginLeft = '8px';
+        openBtn.onclick = () => this.openCurrentFile();
+        fi.appendChild(openBtn);
 
         this._currentFilePath = r.file_path || '';
         this.requestPreview(r.file_path || '', r.file_name || '');
@@ -454,10 +455,16 @@ const Viewer = {
     },
 
     renderPdfPreview(container, data) {
-        // WebView2's Chromium has a built-in PDF viewer
-        // Use virtual host mapping to serve the file
         if (data.virtualPath) {
+            // Show loading spinner until PDF renders
+            const loading = document.createElement('div');
+            loading.className = 'preview-placeholder';
+            loading.textContent = 'Loading PDF...';
+            container.appendChild(loading);
+
             const iframe = document.createElement('iframe');
+            iframe.style.display = 'none';
+            iframe.onload = () => { loading.remove(); iframe.style.display = ''; };
             iframe.src = data.virtualPath;
             container.appendChild(iframe);
         } else {
@@ -567,18 +574,24 @@ const Viewer = {
     renderDocxPreview(container, data) {
         try {
             const binary = atob(data.content);
-            const bytes = new Uint8Array(binary.length);
-            for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+            const buf = new ArrayBuffer(binary.length);
+            const view = new Uint8Array(buf);
+            for (let i = 0; i < binary.length; i++) view[i] = binary.charCodeAt(i);
 
             const wrapper = document.createElement('div');
             wrapper.style.cssText = 'flex:1;overflow:auto;padding:12px;';
             container.appendChild(wrapper);
 
-            docx.renderAsync(bytes, wrapper).catch(() => {
-                wrapper.innerHTML = '<div class="preview-placeholder">Failed to render Word document</div>';
+            docx.renderAsync(buf, wrapper, null, {
+                ignoreWidth: true,
+                ignoreHeight: true
+            }).catch((err) => {
+                wrapper.innerHTML = '<div class="preview-placeholder">Failed to render: ' +
+                    (err && err.message ? err.message : 'unknown error') + '</div>';
             });
         } catch (e) {
-            container.innerHTML = '<div class="preview-placeholder">Failed to parse Word file</div>';
+            container.innerHTML = '<div class="preview-placeholder">Failed to parse: ' +
+                e.message + '</div>';
         }
     },
 
@@ -663,4 +676,5 @@ const Viewer = {
     }
 };
 
-Viewer.init();
+// Init after a short delay to ensure Fluent Web Components are registered
+setTimeout(() => Viewer.init(), 100);

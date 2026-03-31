@@ -12,9 +12,9 @@ namespace WatchBox
         MailScanner _cachedScanner;
 
         public SettingsWindow()
-            : base("Settings", "settings.html", 520, 700)
+            : base("Settings", "settings.html", 460, 560)
         {
-            ResizeMode = ResizeMode.NoResize;
+            MinWidth = 380; MinHeight = 480;
         }
 
         MailScanner GetScanner()
@@ -61,8 +61,8 @@ namespace WatchBox
         void AppendProfileJson(StringBuilder sb, int idx)
         {
             string[] keys = { "name", "type", "output_root", "account",
-                "outlook_folder", "source_folder", "recurse", "since",
-                "filter_mode", "filters", "flat_output", "short_dirname",
+                "outlook_folder", "source_folder", "recurse", "auto_unzip",
+                "since", "filter_mode", "filters", "flat_output", "short_dirname",
                 "notify", "log_enabled", "manifest_hidden" };
             for (int k = 0; k < keys.Length; k++)
             {
@@ -89,9 +89,9 @@ namespace WatchBox
                     int idx = Config.AddProfile(
                         ExtractJsonString(pJson, "name"));
                     string[] keys = { "type", "output_root", "account",
-                        "outlook_folder", "source_folder", "recurse", "since",
-                        "filter_mode", "filters", "flat_output", "short_dirname",
-                        "notify", "log_enabled", "manifest_hidden" };
+                        "outlook_folder", "source_folder", "recurse", "auto_unzip",
+                        "since", "filter_mode", "filters", "flat_output",
+                        "short_dirname", "notify", "log_enabled", "manifest_hidden" };
                     foreach (var k in keys)
                         Config.PSet(idx, k, ExtractJsonString(pJson, k));
                 }
