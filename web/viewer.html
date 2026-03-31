@@ -148,6 +148,7 @@ function initResizer(resizerId, panelId, minW, invert) {
 }
 initResizer('resizer1', 'leftPanel', 120, false);
 initResizer('resizer2', 'rightPanel', 180, true);
+window.addEventListener('resize', () => { if (Viewer.gridApi) Viewer.gridApi.sizeColumnsToFit(); });
 </script>
 </body>
 </html>
