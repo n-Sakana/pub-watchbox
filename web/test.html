@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html data-theme="light">
+<head>
+    <meta charset="utf-8">
+    <title>watchbox - WebView2 Test</title>
+    <link href="https://app.local/vendor/daisyui.css" rel="stylesheet">
+    <script src="https://app.local/vendor/tailwind.js"></script>
+    <link rel="stylesheet" href="https://app.local/css/app.css">
+</head>
+<body class="p-8 bg-base-200">
+    <h1 class="text-2xl font-bold mb-4">WebView2 Integration Test</h1>
+
+    <div class="card bg-base-100 shadow-md p-6 mb-4">
+        <h2 class="text-lg font-semibold mb-2">Status</h2>
+        <div id="status" class="text-success font-mono">WebView2 loaded successfully</div>
+    </div>
+
+    <div class="card bg-base-100 shadow-md p-6 mb-4">
+        <h2 class="text-lg font-semibold mb-2">C# Bridge Test</h2>
+        <button class="btn btn-primary btn-sm" onclick="testBridge()">Send Message to C#</button>
+        <div id="bridge-result" class="mt-2 font-mono text-sm"></div>
+    </div>
+
+    <div class="card bg-base-100 shadow-md p-6 mb-4">
+        <h2 class="text-lg font-semibold mb-2">DaisyUI Components</h2>
+        <div class="flex gap-2 flex-wrap">
+            <button class="btn btn-primary btn-sm">Primary</button>
+            <button class="btn btn-secondary btn-sm">Secondary</button>
+            <button class="btn btn-accent btn-sm">Accent</button>
+            <input type="text" placeholder="Input" class="input input-bordered input-sm w-40">
+            <select class="select select-bordered select-sm w-40">
+                <option>Select</option>
+                <option>Option 1</option>
+            </select>
+            <input type="checkbox" class="checkbox checkbox-primary checkbox-sm" checked>
+            <input type="checkbox" class="toggle toggle-primary toggle-sm" checked>
+        </div>
+    </div>
+
+    <script src="https://app.local/js/bridge.js"></script>
+    <script>
+        function testBridge() {
+            const el = document.getElementById('bridge-result');
+            if (window.chrome && window.chrome.webview) {
+                Bridge.send('test', { message: 'Hello from JS' });
+                el.textContent = 'Message sent!';
+                el.className = 'mt-2 font-mono text-sm text-success';
+            } else {
+                el.textContent = 'No WebView2 bridge (running in browser?)';
+                el.className = 'mt-2 font-mono text-sm text-warning';
+            }
+        }
+        Bridge.on('testResponse', (data) => {
+            document.getElementById('bridge-result').textContent =
+                'Response from C#: ' + JSON.stringify(data);
+        });
+    </script>
+</body>
+</html>

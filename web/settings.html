@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html data-theme="light">
+<head>
+    <meta charset="utf-8">
+    <title>Settings</title>
+    <link href="https://app.local/vendor/daisyui.css" rel="stylesheet">
+    <script src="https://app.local/vendor/tailwind.js"></script>
+    <link rel="stylesheet" href="https://app.local/css/app.css">
+    <style>
+        body { overflow-y: auto; }
+        .source-mail, .source-folder { display: none; }
+        body.type-mail .source-mail { display: grid; }
+        body.type-folder .source-folder { display: grid; }
+    </style>
+</head>
+<body class="bg-base-200 type-mail">
+<div class="p-4 max-w-lg mx-auto">
+
+    <!-- Profile bar -->
+    <div class="flex items-center gap-2 mb-4">
+        <select id="profileSelect" class="select select-bordered select-sm flex-1"
+                onchange="Settings.onProfileChange()"></select>
+        <button class="btn btn-sm btn-ghost" onclick="Settings.addProfile()" title="Add profile">+</button>
+        <button class="btn btn-sm btn-ghost" onclick="Settings.removeProfile()" title="Remove profile">&minus;</button>
+    </div>
+
+    <!-- Name + Type -->
+    <div class="field-row">
+        <label class="field-label">Name</label>
+        <input id="fName" type="text" class="input input-bordered input-sm w-full">
+    </div>
+    <div class="field-row">
+        <label class="field-label">Type</label>
+        <select id="fType" class="select select-bordered select-sm w-40" onchange="Settings.onTypeChange()">
+            <option value="mail">Mail</option>
+            <option value="folder">Folder</option>
+        </select>
+    </div>
+
+    <!-- PULL -->
+    <div class="divider text-xs opacity-50 my-2">PULL</div>
+    <div class="field-row">
+        <label class="field-label">Folder</label>
+        <div class="flex gap-1">
+            <input id="fOutputRoot" type="text" class="input input-bordered input-sm flex-1 min-w-0">
+            <button class="btn btn-sm btn-ghost" onclick="Settings.browse('output_root')">...</button>
+        </div>
+    </div>
+    <div class="field-row">
+        <label class="field-label"></label>
+        <div class="flex flex-col gap-1">
+            <label class="flex items-center gap-2 cursor-pointer">
+                <input id="fFlat" type="checkbox" class="checkbox checkbox-sm checkbox-primary">
+                <span class="text-sm">Flat (no folder structure)</span>
+            </label>
+            <label class="flex items-center gap-2 cursor-pointer">
+                <input id="fShortDirname" type="checkbox" class="checkbox checkbox-sm checkbox-primary">
+                <span class="text-sm">Short folder names (timestamp only)</span>
+            </label>
+        </div>
+    </div>
+
+    <!-- SOURCE -->
+    <div class="divider text-xs opacity-50 my-2">SOURCE</div>
+
+    <!-- Mail source -->
+    <div class="field-row source-mail">
+        <label class="field-label">Account</label>
+        <select id="fAccount" class="select select-bordered select-sm w-full"
+                onchange="Settings.onAccountChange()">
+            <option value="">(All)</option>
+        </select>
+    </div>
+    <div class="field-row source-mail">
+        <label class="field-label">Outlook folder</label>
+        <select id="fOutlookFolder" class="select select-bordered select-sm w-full">
+            <option value="">(All)</option>
+        </select>
+    </div>
+
+    <!-- Folder source -->
+    <div class="field-row source-folder">
+        <label class="field-label">Source folder</label>
+        <div class="flex gap-1">
+            <input id="fSourceFolder" type="text" class="input input-bordered input-sm flex-1 min-w-0">
+            <button class="btn btn-sm btn-ghost" onclick="Settings.browse('source_folder')">...</button>
+        </div>
+    </div>
+    <div class="field-row source-folder">
+        <label class="field-label"></label>
+        <label class="flex items-center gap-2 cursor-pointer">
+            <input id="fRecurse" type="checkbox" class="checkbox checkbox-sm checkbox-primary" checked>
+            <span class="text-sm">Include subfolders</span>
+        </label>
+    </div>
+
+    <!-- FILTER -->
+    <div class="divider text-xs opacity-50 my-2">FILTER</div>
+    <div class="field-row">
+        <label class="field-label">Since</label>
+        <input id="fSince" type="date" class="input input-bordered input-sm w-40">
+    </div>
+    <div class="field-row">
+        <label class="field-label">Match</label>
+        <div class="flex gap-4">
+            <label class="flex items-center gap-1 cursor-pointer">
+                <input type="radio" name="filterMode" value="or" class="radio radio-sm radio-primary" checked>
+                <span class="text-sm">Any (OR)</span>
+            </label>
+            <label class="flex items-center gap-1 cursor-pointer">
+                <input type="radio" name="filterMode" value="and" class="radio radio-sm radio-primary">
+                <span class="text-sm">All (AND)</span>
+            </label>
+        </div>
+    </div>
+    <div class="field-row">
+        <label class="field-label">Keywords</label>
+        <div>
+            <div id="filterList" class="border rounded bg-base-100 min-h-[40px] max-h-[80px] overflow-y-auto mb-1 p-1"></div>
+            <div class="flex gap-1">
+                <input id="fNewFilter" type="text" class="input input-bordered input-sm flex-1 min-w-0"
+                       placeholder="Add keyword..." onkeydown="if(event.key==='Enter')Settings.addFilter()">
+                <button class="btn btn-sm btn-ghost" onclick="Settings.addFilter()">+</button>
+                <button class="btn btn-sm btn-ghost" onclick="Settings.removeFilter()">&minus;</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- MONITORING -->
+    <div class="divider text-xs opacity-50 my-2">MONITORING</div>
+    <div class="field-row">
+        <label class="field-label"></label>
+        <div class="flex flex-col gap-1">
+            <label class="flex items-center gap-2 cursor-pointer">
+                <input id="fNotify" type="checkbox" class="checkbox checkbox-sm checkbox-primary" checked>
+                <span class="text-sm">Show notifications</span>
+            </label>
+            <label class="flex items-center gap-2 cursor-pointer">
+                <input id="fLog" type="checkbox" class="checkbox checkbox-sm checkbox-primary" checked>
+                <span class="text-sm">Write change log</span>
+            </label>
+            <label class="flex items-center gap-2 cursor-pointer">
+                <input id="fManifestHidden" type="checkbox" class="checkbox checkbox-sm checkbox-primary" checked>
+                <span class="text-sm">Hide manifest file</span>
+            </label>
+        </div>
+    </div>
+
+    <!-- Buttons -->
+    <div class="flex items-center mt-4 pt-3 border-t">
+        <button class="btn btn-sm btn-ghost" onclick="Settings.importCsv()">Import CSV</button>
+        <button class="btn btn-sm btn-ghost" onclick="Settings.exportCsv()">Export CSV</button>
+        <button class="btn btn-sm btn-ghost text-error" onclick="Settings.resetAll()">Reset All</button>
+        <div class="flex-1"></div>
+        <button class="btn btn-sm btn-primary" onclick="Settings.save()">Save</button>
+        <button class="btn btn-sm btn-ghost ml-2" onclick="Settings.cancel()">Cancel</button>
+    </div>
+
+</div>
+
+<script src="https://app.local/js/bridge.js"></script>
+<script src="https://app.local/js/settings.js"></script>
+</body>
+</html>

@@ -10,6 +10,19 @@ namespace WatchBox
         public static void Run(string appDir)
         {
             Config.Load(Path.Combine(appDir, "config.json"));
+            Config.Set("app_dir", appDir);
+
+            // Resolve WebView2 DLLs from lib/ at runtime
+            string libDir = Path.Combine(appDir, "lib");
+            AppDomain.CurrentDomain.AssemblyResolve += (sender, args) =>
+            {
+                string name = new System.Reflection.AssemblyName(args.Name).Name;
+                string dllPath = Path.Combine(libDir, name + ".dll");
+                if (File.Exists(dllPath))
+                    return System.Reflection.Assembly.LoadFrom(dllPath);
+                return null;
+            };
+
             var app = new System.Windows.Application();
             app.ShutdownMode = System.Windows.ShutdownMode.OnMainWindowClose;
             app.Run(new MonitorWindow());

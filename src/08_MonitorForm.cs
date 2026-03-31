@@ -73,6 +73,9 @@ namespace WatchBox
                 f.ShowDialog();
             };
             btnViewer.Click += (s, e) => { var w = new SearchWindow(); w.Owner = this; w.Show(); };
+
+            // Pre-initialize WebView2 environment in background for fast window open
+            Loaded += async (s, e) => { try { await WebViewHost.WarmUpAsync(); } catch { } };
             _btnPull.Click += OnPullClick;
             _btnWatch.Click += OnWatchClick;
         }

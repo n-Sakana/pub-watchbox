@@ -5,6 +5,13 @@ Add-Type -AssemblyName PresentationFramework
 Add-Type -AssemblyName PresentationCore
 Add-Type -AssemblyName WindowsBase
 
+# Load WebView2 assemblies from lib/
+$libDir = "$PSScriptRoot\lib"
+if (Test-Path "$libDir\Microsoft.Web.WebView2.Core.dll") {
+    [System.Reflection.Assembly]::LoadFrom("$libDir\Microsoft.Web.WebView2.Core.dll") | Out-Null
+    [System.Reflection.Assembly]::LoadFrom("$libDir\Microsoft.Web.WebView2.Wpf.dll") | Out-Null
+}
+
 $combined = (Get-ChildItem "$PSScriptRoot\src\*.cs" | Sort-Object Name |
     ForEach-Object { Get-Content $_ -Raw }) -join "`n"
 
@@ -22,7 +29,14 @@ $refs = @(
     [System.Windows.DependencyObject].Assembly.Location
     [System.Xaml.XamlReader].Assembly.Location
     'Microsoft.CSharp'
+    'System.Drawing'
 )
+
+# Add WebView2 references if available
+if (Test-Path "$libDir\Microsoft.Web.WebView2.Wpf.dll") {
+    $refs += "$libDir\Microsoft.Web.WebView2.Core.dll"
+    $refs += "$libDir\Microsoft.Web.WebView2.Wpf.dll"
+}
 
 Add-Type -TypeDefinition $source -ReferencedAssemblies $refs
 [WatchBox.App]::Run($PSScriptRoot)
