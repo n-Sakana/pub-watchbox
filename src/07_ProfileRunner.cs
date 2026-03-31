@@ -12,7 +12,7 @@ namespace WatchBox
             Action<int, string> onProgress = null)
         {
             string type = Config.PGet(profileIndex, "type", "mail");
-            string outputRoot = Config.PGet(profileIndex, "output_root");
+            string outputRoot = (Config.PGet(profileIndex, "output_root") ?? "").Trim();
             if (string.IsNullOrEmpty(outputRoot)) return new RunResult();
 
             bool logEnabled = Config.PGet(profileIndex, "log_enabled", "1") == "1";
@@ -119,7 +119,7 @@ namespace WatchBox
             var config = new Dictionary<string, string>();
             string[] keys = { "output_root", "account", "outlook_folder", "since",
                 "filter_mode", "filters", "flat_output", "source_folder",
-                "recurse", "type" };
+                "recurse", "type", "short_dirname" };
             foreach (var k in keys)
                 config[k] = Config.PGet(profileIndex, k);
             return config;

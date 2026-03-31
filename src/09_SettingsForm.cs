@@ -29,12 +29,14 @@ namespace WatchBox
         TextBox _txtNewFilter;
         TextBox _txtPath;
         CheckBox _chkFlat;
+        CheckBox _chkShortDirname;
         CheckBox _chkNotify, _chkLog, _chkManifestHidden;
 
         List<string> _folderPaths = new List<string>();
         List<string> _currentFilters = new List<string>();
         int _currentIdx = -1;
         bool _loading;
+        MailScanner _cachedScanner;
 
         public SettingsWindow()
         {
@@ -78,6 +80,8 @@ namespace WatchBox
             root.Children.Add(FieldRow("Folder", _txtPath = new TextBox(), MkBrowseBtn()));
             _chkFlat = new CheckBox { Content = "Flat (no folder structure)", FontSize = 12 };
             root.Children.Add(FieldRow("", _chkFlat));
+            _chkShortDirname = new CheckBox { Content = "Short folder names (timestamp only)", FontSize = 12 };
+            root.Children.Add(FieldRow("", _chkShortDirname));
 
             // --- SOURCE (swapped by type, grayed by mode) ---
             root.Children.Add(new Separator { Margin = new Thickness(0, 8, 0, 8) });
@@ -388,6 +392,7 @@ namespace WatchBox
             // Common output
             _txtPath.Text = Config.PGet(i, "output_root");
             _chkFlat.IsChecked = Config.PGet(i, "flat_output") == "1";
+            _chkShortDirname.IsChecked = Config.PGet(i, "short_dirname") == "1";
 
             // Common monitoring
             _chkNotify.IsChecked = Config.PGet(i, "notify", "1") != "0";
@@ -424,6 +429,7 @@ namespace WatchBox
             // Common output
             Config.PSet(i, "output_root", _txtPath.Text);
             Config.PSet(i, "flat_output", _chkFlat.IsChecked == true ? "1" : "0");
+            Config.PSet(i, "short_dirname", _chkShortDirname.IsChecked == true ? "1" : "0");
 
             // Common monitoring
             Config.PSet(i, "notify", _chkNotify.IsChecked == true ? "1" : "0");
@@ -436,6 +442,12 @@ namespace WatchBox
 
         // --- Outlook data ---
 
+        MailScanner GetScanner()
+        {
+            if (_cachedScanner == null) _cachedScanner = new MailScanner();
+            return _cachedScanner;
+        }
+
         void LoadOutlookData()
         {
             Cursor = System.Windows.Input.Cursors.Wait;
@@ -446,7 +458,7 @@ namespace WatchBox
                 _cmbAccount.Items.Add("(All)");
                 _cmbAccount.SelectedIndex = 0;
 
-                var scanner = new MailScanner();
+                var scanner = GetScanner();
                 foreach (var a in scanner.GetAccounts()) _cmbAccount.Items.Add(a);
 
                 if (_currentIdx >= 0) LoadCurrentProfile();
@@ -465,7 +477,7 @@ namespace WatchBox
             _cmbFolder.Items.Add("(All)");
             _folderPaths.Add("");
             string acct = _cmbAccount.SelectedIndex > 0 ? _cmbAccount.SelectedItem.ToString() : "";
-            var scanner = new MailScanner();
+            var scanner = GetScanner();
             foreach (var f in scanner.GetFolders(acct))
             {
                 _cmbFolder.Items.Add(f[0]);
@@ -541,6 +553,7 @@ namespace WatchBox
                     Config.PSet(idx, "flat_output", ColVal(cols, 9, "0"));
                     Config.PSet(idx, "recurse", ColVal(cols, 10, "1"));
                     Config.PSet(idx, "since", ColVal(cols, 11, ""));
+                    Config.PSet(idx, "short_dirname", ColVal(cols, 12, "0"));
                     added++;
                 }
 
@@ -566,7 +579,7 @@ namespace WatchBox
             try
             {
                 var lines = new List<string>();
-                lines.Add("name,type,output_root,account,outlook_folder,source_folder,manifest_hidden,filters,filter_mode,flat_output,recurse,since");
+                lines.Add("name,type,output_root,account,outlook_folder,source_folder,manifest_hidden,filters,filter_mode,flat_output,recurse,since,short_dirname");
                 for (int i = 0; i < Config.ProfileCount; i++)
                 {
                     lines.Add(string.Join(",", new[] {
@@ -581,7 +594,8 @@ namespace WatchBox
                         Config.PGet(i, "filter_mode", "or"),
                         Config.PGet(i, "flat_output", "0"),
                         Config.PGet(i, "recurse", "1"),
-                        Config.PGet(i, "since")
+                        Config.PGet(i, "since"),
+                        Config.PGet(i, "short_dirname", "0")
                     }));
                 }
                 File.WriteAllLines(dlg.FileName, lines.ToArray(), System.Text.Encoding.UTF8);

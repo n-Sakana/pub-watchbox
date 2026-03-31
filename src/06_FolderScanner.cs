@@ -75,7 +75,7 @@ namespace WatchBox
         List<ScanResult> ScanWithCopy(Dictionary<string, string> config, string sourceFolder)
         {
             var results = new List<ScanResult>();
-            string outputRoot = config.ContainsKey("output_root") ? config["output_root"] : "";
+            string outputRoot = config.ContainsKey("output_root") ? config["output_root"].Trim() : "";
             bool recurse = !config.ContainsKey("recurse") || config["recurse"] != "0";
 
             if (string.IsNullOrEmpty(outputRoot)) return results;
@@ -96,14 +96,14 @@ namespace WatchBox
                     string relativePath = filePath.Substring(sourceFolder.Length).TrimStart('\\', '/');
                     string itemId = ManifestIO.ComputeItemId(relativePath);
 
-                    if (!IsNewOrModified(itemId, fi, existing)) continue;
-
-                    // Copy: flat or structured
+                    // Compute destination path for re-copy detection
                     string destPath;
                     if (_flatOutput)
                         destPath = Path.Combine(outputRoot, fi.Name);
                     else
                         destPath = Path.Combine(outputRoot, relativePath);
+
+                    if (!IsNewOrModified(itemId, fi, existing, destPath)) continue;
                     string destDir = Path.GetDirectoryName(destPath);
                     Directory.CreateDirectory(destDir);
                     File.Copy(filePath, destPath, true);
@@ -128,7 +128,7 @@ namespace WatchBox
         List<ScanResult> ScanInPlace(Dictionary<string, string> config)
         {
             var results = new List<ScanResult>();
-            string outputRoot = config.ContainsKey("output_root") ? config["output_root"] : "";
+            string outputRoot = config.ContainsKey("output_root") ? config["output_root"].Trim() : "";
             bool recurse = !config.ContainsKey("recurse") || config["recurse"] != "0";
 
             if (string.IsNullOrEmpty(outputRoot) || !Directory.Exists(outputRoot)) return results;
@@ -180,10 +180,12 @@ namespace WatchBox
         }
 
         static bool IsNewOrModified(string itemId, FileInfo fi,
-            Dictionary<string, FolderManifestRow> existing)
+            Dictionary<string, FolderManifestRow> existing, string destPath = null)
         {
             FolderManifestRow row;
             if (!existing.TryGetValue(itemId, out row)) return true;
+            // Re-copy if destination file was manually deleted
+            if (destPath != null && !File.Exists(destPath)) return true;
             return row.FileSize != fi.Length.ToString() ||
                    row.ModifiedAt != fi.LastWriteTime.ToString("yyyy-MM-dd\\THH:mm:ss");
         }

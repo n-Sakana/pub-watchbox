@@ -17,6 +17,7 @@ namespace WatchBox
         string _filterMode;
         List<string> _filterWords;
         bool _flatOutput;
+        bool _shortDirname;
 
         // --- Outlook connection ---
 
@@ -41,26 +42,41 @@ namespace WatchBox
             if (!Connect()) return list;
             try
             {
+                var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
                 foreach (dynamic acct in _olNs.Accounts)
                 {
-                    try { if (!string.IsNullOrEmpty((string)acct.SmtpAddress)) list.Add((string)acct.SmtpAddress); }
+                    try
+                    {
+                        string smtp = (string)acct.SmtpAddress;
+                        if (!string.IsNullOrEmpty(smtp) && seen.Add(smtp))
+                            list.Add(smtp);
+                    }
                     catch { }
                 }
-                var known = new HashSet<string>();
+                // Also enumerate stores not tied to any account (shared/delegate mailboxes)
+                var accountStoreIds = new HashSet<string>();
                 foreach (dynamic acct in _olNs.Accounts)
                 {
-                    try { known.Add((string)acct.DeliveryStore.StoreID); } catch { }
+                    try { accountStoreIds.Add((string)acct.DeliveryStore.StoreID); } catch { }
                 }
                 foreach (dynamic store in _olNs.Stores)
                 {
                     try
                     {
-                        if (known.Contains((string)store.StoreID)) continue;
+                        if (accountStoreIds.Contains((string)store.StoreID)) continue;
                         string addr = "";
+                        // Try PR_EMAIL_ADDRESS
                         try { addr = ((string)store.GetRootFolder().PropertyAccessor.GetProperty(
                             "http://schemas.microsoft.com/mapi/proptag/0x39FE001E")).ToLower(); } catch { }
-                        if (string.IsNullOrEmpty(addr)) addr = ((string)store.DisplayName).ToLower();
-                        if (!string.IsNullOrEmpty(addr)) list.Add(addr);
+                        // Try PR_SMTP_ADDRESS (alternative property for shared mailboxes)
+                        if (string.IsNullOrEmpty(addr))
+                            try { addr = ((string)store.GetRootFolder().PropertyAccessor.GetProperty(
+                                "http://schemas.microsoft.com/mapi/proptag/0x39FE001F")).ToLower(); } catch { }
+                        // Fallback to display name
+                        if (string.IsNullOrEmpty(addr))
+                            try { addr = ((string)store.DisplayName).ToLower(); } catch { }
+                        if (!string.IsNullOrEmpty(addr) && seen.Add(addr))
+                            list.Add(addr);
                     }
                     catch { }
                 }
@@ -90,13 +106,33 @@ namespace WatchBox
                 }
                 else
                 {
+                    // Try matching account first, then fall back to store lookup
+                    bool found = false;
                     foreach (dynamic acct in _olNs.Accounts)
                     {
                         if (string.Equals((string)acct.SmtpAddress, accountFilter,
                             StringComparison.OrdinalIgnoreCase))
                         {
                             CollectFolders(acct.DeliveryStore.GetRootFolder(), 0, "", list);
+                            found = true;
                             break;
+                        }
+                    }
+                    // Shared/delegate mailbox: match by store SMTP or display name
+                    if (!found)
+                    {
+                        foreach (dynamic store in _olNs.Stores)
+                        {
+                            try
+                            {
+                                string smtp = GetStoreSmtp(store);
+                                if (string.Equals(smtp, accountFilter, StringComparison.OrdinalIgnoreCase))
+                                {
+                                    CollectFolders(store.GetRootFolder(), 0, "", list);
+                                    break;
+                                }
+                            }
+                            catch { }
                         }
                     }
                 }
@@ -129,7 +165,7 @@ namespace WatchBox
             Dictionary<string, string> config, HashSet<string> knownIds)
         {
             var results = new List<ScanResult>();
-            string outputRoot = config.ContainsKey("output_root") ? config["output_root"] : "";
+            string outputRoot = config.ContainsKey("output_root") ? config["output_root"].Trim() : "";
             if (!Connect() || string.IsNullOrEmpty(outputRoot)) return results;
             Directory.CreateDirectory(outputRoot);
 
@@ -139,6 +175,7 @@ namespace WatchBox
             string filterMode = config.ContainsKey("filter_mode") ? config["filter_mode"] : "";
             string filterKeywords = config.ContainsKey("filters") ? config["filters"] : "";
             _flatOutput = config.ContainsKey("flat_output") && config["flat_output"] == "1";
+            _shortDirname = config.ContainsKey("short_dirname") && config["short_dirname"] == "1";
 
             _filterMode = (filterMode ?? "").ToLower() == "and" ? "and" : "or";
             _filterWords = new List<string>();
@@ -146,19 +183,27 @@ namespace WatchBox
                 foreach (var kw in filterKeywords.Split(';'))
                     if (kw.Trim().Length > 0) _filterWords.Add(kw.Trim().ToLower());
 
+            // Remove IDs whose output folders were manually deleted
             _exported = new HashSet<string>(knownIds);
+            PurgeStaleMailIds(outputRoot, _exported);
 
             string filter = null;
             DateTime dt;
             if (!string.IsNullOrEmpty(sinceDate) && DateTime.TryParse(sinceDate, out dt))
                 filter = string.Format("[ReceivedTime]>='{0:yyyy/MM/dd}'", dt);
-            else if (knownIds.Count > 0)
+            else if (_exported.Count > 0)
             {
                 // Already have data: use latest date from manifest to narrow scan
                 DateTime latest = ManifestIO.GetLatestMailDate(outputRoot);
                 if (latest > DateTime.MinValue)
                     filter = string.Format("[ReceivedTime]>='{0:yyyy/MM/dd}'",
                         latest.AddDays(-1));
+            }
+            else
+            {
+                // First run with no since filter: default to 30 days back
+                filter = string.Format("[ReceivedTime]>='{0:yyyy/MM/dd}'",
+                    DateTime.Now.AddDays(-30));
             }
 
             foreach (dynamic store in _olNs.Stores)
@@ -256,7 +301,7 @@ namespace WatchBox
         {
             try
             {
-                string mailDir = Path.Combine(folderRoot, BuildMailDirName(mail));
+                string mailDir = Path.Combine(folderRoot, BuildMailDirName(mail, folderRoot));
                 if (File.Exists(Path.Combine(mailDir, "meta.json"))) return null;
 
                 Directory.CreateDirectory(mailDir);
@@ -293,6 +338,28 @@ namespace WatchBox
         }
 
         // --- Helpers ---
+
+        // Remove manifest entries whose output folder (mail_folder column) no longer exists
+        static void PurgeStaleMailIds(string outputRoot, HashSet<string> exported)
+        {
+            var rows = ManifestIO.LoadRows(outputRoot);
+            var staleIds = new HashSet<string>();
+            foreach (var kv in rows)
+            {
+                // mail_folder is column index 9 (mail_folder)
+                if (kv.Value.Length > 9)
+                {
+                    string mailFolder = kv.Value[9];
+                    if (!string.IsNullOrEmpty(mailFolder) && !Directory.Exists(mailFolder))
+                    {
+                        staleIds.Add(kv.Key);
+                        exported.Remove(kv.Key);
+                    }
+                }
+            }
+            if (staleIds.Count > 0)
+                ManifestIO.RemoveRows(outputRoot, staleIds);
+        }
 
         static string BuildAttachPaths(List<string> names, string dir)
         {
@@ -412,10 +479,20 @@ namespace WatchBox
             try { return ((string)store.DisplayName).ToLower(); } catch { return ""; }
         }
 
-        string BuildMailDirName(dynamic mail)
+        string BuildMailDirName(dynamic mail, string parentDir)
         {
-            return ((DateTime)mail.ReceivedTime).ToString("yyyyMMdd_HHmmss") + "_" +
-                SafeName((string)mail.Subject);
+            string ts = ((DateTime)mail.ReceivedTime).ToString("yyyyMMdd_HHmmss");
+            string baseName = _shortDirname ? ts : ts + "_" + SafeName((string)mail.Subject);
+            // Disambiguate if directory already exists (same-second emails)
+            string candidate = baseName;
+            int suffix = 2;
+            while (Directory.Exists(Path.Combine(parentDir, candidate))
+                && File.Exists(Path.Combine(parentDir, candidate, "meta.json")))
+            {
+                candidate = baseName + "_" + suffix;
+                suffix++;
+            }
+            return candidate;
         }
 
         string NormalizeFolderPath(string folderPath)
