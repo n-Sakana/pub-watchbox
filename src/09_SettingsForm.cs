@@ -176,6 +176,8 @@ namespace WatchBox
             btnImport.Click += OnImportCsv;
             btnExport.Click += OnExportCsv;
 
+            if (Config.ProfileCount == 0)
+                Config.AddProfile("Default");
             LoadProfileList();
             if (_cmbProfile.Items.Count > 0)
                 _cmbProfile.SelectedIndex = 0;

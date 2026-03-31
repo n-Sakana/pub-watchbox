@@ -71,7 +71,9 @@ namespace WatchBox
             // Folder-specific (source_folder optional: set = copy mode, empty = manifest-only)
             "source_folder", "recurse",
             // Manifest visibility
-            "manifest_hidden"
+            "manifest_hidden",
+            // Mail directory naming
+            "short_dirname"
         };
 
         public static int ProfileCount
@@ -111,6 +113,7 @@ namespace WatchBox
             PSet(idx, "source_folder", "");
             PSet(idx, "recurse", "1");
             PSet(idx, "manifest_hidden", "1");
+            PSet(idx, "short_dirname", "0");
             return idx;
         }
 
