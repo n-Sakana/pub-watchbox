@@ -121,16 +121,20 @@
 <script src="https://app.local/js/bridge.js"></script>
 <script src="https://app.local/js/viewer.js"></script>
 <script>
-function initResizer(resizerId, leftPanelId, minW) {
+function initResizer(resizerId, panelId, minW, invert) {
     const resizer = document.getElementById(resizerId);
-    const left = document.getElementById(leftPanelId);
+    const panel = document.getElementById(panelId);
     let startX, startW;
     resizer.addEventListener('mousedown', (e) => {
-        startX = e.clientX; startW = left.getBoundingClientRect().width;
+        startX = e.clientX; startW = panel.getBoundingClientRect().width;
         resizer.classList.add('active');
         document.body.style.cursor = 'col-resize';
         document.body.style.userSelect = 'none';
-        const onMove = (e) => { left.style.width = Math.max(minW, startW + e.clientX - startX) + 'px'; };
+        const onMove = (e) => {
+            const delta = invert ? startX - e.clientX : e.clientX - startX;
+            panel.style.width = Math.max(minW, startW + delta) + 'px';
+            panel.style.flex = 'none';
+        };
         const onUp = () => {
             resizer.classList.remove('active');
             document.body.style.cursor = ''; document.body.style.userSelect = '';
@@ -141,8 +145,8 @@ function initResizer(resizerId, leftPanelId, minW) {
         document.addEventListener('mouseup', onUp);
     });
 }
-initResizer('resizer1', 'leftPanel', 120);
-initResizer('resizer2', 'centerPanel', 150);
+initResizer('resizer1', 'leftPanel', 120, false);
+initResizer('resizer2', 'rightPanel', 180, true);
 </script>
 </body>
 </html>
