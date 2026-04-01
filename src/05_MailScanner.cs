@@ -35,6 +35,7 @@ namespace WatchBox
         List<string> _filterWords;
         bool _flatOutput;
         bool _shortDirname;
+        bool _autoUnzip;
 
         // --- Outlook connection ---
 
@@ -199,6 +200,7 @@ namespace WatchBox
             string filterKeywords = config.ContainsKey("filters") ? config["filters"] : "";
             _flatOutput = config.ContainsKey("flat_output") && config["flat_output"] == "1";
             _shortDirname = config.ContainsKey("short_dirname") && config["short_dirname"] == "1";
+            _autoUnzip = config.ContainsKey("auto_unzip") && config["auto_unzip"] == "1";
 
             _filterMode = (filterMode ?? "").ToLower() == "and" ? "and" : "or";
             _filterWords = new List<string>();
@@ -404,6 +406,7 @@ namespace WatchBox
             string filterKeywords = config.ContainsKey("filters") ? config["filters"] : "";
             _flatOutput = config.ContainsKey("flat_output") && config["flat_output"] == "1";
             _shortDirname = config.ContainsKey("short_dirname") && config["short_dirname"] == "1";
+            _autoUnzip = config.ContainsKey("auto_unzip") && config["auto_unzip"] == "1";
 
             string mode = (filterMode ?? "").ToLower() == "and" ? "and" : "or";
             var words = new List<string>();
@@ -664,7 +667,18 @@ namespace WatchBox
                     {
                         dynamic att = mail.Attachments[i];
                         string safeFn = SafeName((string)att.FileName);
-                        att.SaveAsFile(Path.Combine(mailDir, safeFn));
+                        string savePath = Path.Combine(mailDir, safeFn);
+                        att.SaveAsFile(savePath);
+
+                        // Auto-extract zip attachments
+                        if (_autoUnzip && safeFn.EndsWith(".zip", StringComparison.OrdinalIgnoreCase))
+                        {
+                            if (TryExtractZip(savePath, mailDir))
+                            {
+                                try { File.Delete(savePath); } catch { }
+                                continue; // skip adding zip to attachment list
+                            }
+                        }
                         names.Add(safeFn);
                     }
                     catch { }
@@ -672,6 +686,45 @@ namespace WatchBox
             }
             catch { }
             return names;
+        }
+
+        static bool TryExtractZip(string zipPath, string destDir)
+        {
+            string extractDir = Path.Combine(destDir,
+                Path.GetFileNameWithoutExtension(zipPath));
+            try
+            {
+                using (var archive = System.IO.Compression.ZipFile.OpenRead(zipPath))
+                {
+                    // Check for password protection
+                    foreach (var entry in archive.Entries)
+                    {
+                        if (entry.Length == 0) continue;
+                        try
+                        {
+                            using (var stream = entry.Open())
+                                stream.ReadByte();
+                        }
+                        catch (InvalidDataException)
+                        {
+                            return false; // password-protected
+                        }
+                        break;
+                    }
+
+                    foreach (var entry in archive.Entries)
+                    {
+                        if (string.IsNullOrEmpty(entry.Name)) continue;
+                        string entryDest = Path.Combine(extractDir, entry.FullName);
+                        string entryDir = Path.GetDirectoryName(entryDest);
+                        Directory.CreateDirectory(entryDir);
+                        try { entry.ExtractToFile(entryDest, true); }
+                        catch { }
+                    }
+                }
+                return true;
+            }
+            catch { return false; }
         }
 
         void WriteMetaJson(string path, dynamic mail, List<string> attNames, string smtp)
