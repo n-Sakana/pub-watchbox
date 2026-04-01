@@ -6,6 +6,22 @@ using System.Text;
 
 namespace WatchBox
 {
+    // Lightweight cache of mail item data for cross-profile optimization.
+    // Holds text data only (no COM references) so items can be filtered
+    // in memory without COM overhead.
+    public class CachedMailItem
+    {
+        public string EntryID;
+        public string Subject;
+        public string SenderEmail;
+        public string SenderName;
+        public string BodyLower;      // lowercased for keyword matching
+        public string SubjectLower;
+        public string SenderEmailLower;
+        public DateTime ReceivedTime;
+        public string FolderPath;
+    }
+
     public class MailScanner : SourceScanner
     {
         const int OL_MSG_UNICODE = 9;
@@ -276,7 +292,30 @@ namespace WatchBox
                         if ((int)item.Class == OL_MAIL_CLASS)
                         {
                             string eid = (string)item.EntryID;
-                            if (!_exported.Contains(eid))
+
+                            // Cache mode: collect item data without exporting
+                            if (_cacheTarget != null)
+                            {
+                                string subj = ""; string body = "";
+                                string senderAddr = ""; string senderName = "";
+                                try { subj = (string)item.Subject ?? ""; } catch { }
+                                try { body = (string)item.Body ?? ""; } catch { }
+                                try { senderAddr = (string)item.SenderEmailAddress ?? ""; } catch { }
+                                try { senderName = (string)item.SenderName ?? ""; } catch { }
+                                _cacheTarget.Add(new CachedMailItem {
+                                    EntryID = eid,
+                                    Subject = subj,
+                                    SenderEmail = senderAddr,
+                                    SenderName = senderName,
+                                    BodyLower = body.ToLower(),
+                                    SubjectLower = subj.ToLower(),
+                                    SenderEmailLower = senderAddr.ToLower(),
+                                    ReceivedTime = (DateTime)item.ReceivedTime,
+                                    FolderPath = (string)item.Parent.FolderPath
+                                });
+                                OnProgress(_cacheTarget.Count, subj);
+                            }
+                            else if (!_exported.Contains(eid))
                             {
                                 // Export files immediately (msg, body, meta, attachments)
                                 var sr = ExportAndBuildResult(item, folderRoot, outputRoot, smtp);
@@ -303,6 +342,147 @@ namespace WatchBox
                     }
             }
             catch { }
+        }
+
+        // --- Bulk scan: uses existing Scan() flow but caches instead of exporting ---
+
+        // Scan an account+folder with date-only filter and cache all item data.
+        // Runs through the proven Scan() code path with a special config that
+        // triggers caching mode (_cacheTarget is set).
+        List<CachedMailItem> _cacheTarget;
+
+        public List<CachedMailItem> ScanBulk(
+            Dictionary<string, string> config, string dateFilter)
+        {
+            // Build a minimal config for Scan() — no keywords, no export
+            var scanConfig = new Dictionary<string, string>();
+            scanConfig["account"] = config.ContainsKey("account") ? config["account"] : "";
+            scanConfig["outlook_folder"] = config.ContainsKey("outlook_folder") ? config["outlook_folder"] : "";
+            scanConfig["output_root"] = Path.GetTempPath();
+            scanConfig["since"] = "";
+            scanConfig["filter_mode"] = "or";
+            scanConfig["filters"] = "";
+            scanConfig["flat_output"] = "1";
+            scanConfig["source_folder"] = "";
+            scanConfig["recurse"] = "1";
+            scanConfig["type"] = "mail";
+            scanConfig["short_dirname"] = "0";
+            scanConfig["auto_unzip"] = "0";
+            // Override date filter via last_scan if dateFilter provided, else no filter
+            scanConfig["last_scan"] = "";
+            // Use since to control the date filter
+            if (dateFilter != null)
+            {
+                // Extract date from Jet filter: [ReceivedTime]>='yyyy/MM/dd 00:00'
+                var m = System.Text.RegularExpressions.Regex.Match(
+                    dateFilter, @"(\d{4}/\d{2}/\d{2})");
+                if (m.Success)
+                    scanConfig["since"] = m.Groups[1].Value.Replace("/", "-");
+            }
+
+            _cacheTarget = new List<CachedMailItem>();
+            Scan(scanConfig, new HashSet<string>());
+            var result = _cacheTarget;
+            _cacheTarget = null;
+            return result;
+        }
+
+        // Export items from cache that match a profile's keyword filter.
+        // Uses GetItemFromID to fetch COM objects only for items that need export.
+        public List<ScanResult> ExportFromCache(
+            List<CachedMailItem> cache,
+            Dictionary<string, string> config,
+            HashSet<string> knownIds)
+        {
+            var results = new List<ScanResult>();
+            string outputRoot = config.ContainsKey("output_root") ? config["output_root"].Trim() : "";
+            if (string.IsNullOrEmpty(outputRoot)) return results;
+            Directory.CreateDirectory(outputRoot);
+
+            string filterAccount = config.ContainsKey("account") ? config["account"] : "";
+            string filterMode = config.ContainsKey("filter_mode") ? config["filter_mode"] : "";
+            string filterKeywords = config.ContainsKey("filters") ? config["filters"] : "";
+            _flatOutput = config.ContainsKey("flat_output") && config["flat_output"] == "1";
+            _shortDirname = config.ContainsKey("short_dirname") && config["short_dirname"] == "1";
+
+            string mode = (filterMode ?? "").ToLower() == "and" ? "and" : "or";
+            var words = new List<string>();
+            if (!string.IsNullOrEmpty(filterKeywords))
+                foreach (var kw in filterKeywords.Split(';'))
+                    if (kw.Trim().Length > 0) words.Add(kw.Trim().ToLower());
+
+            // Parse per-profile date range (the cache may have a broader range)
+            DateTime sinceDate = DateTime.MinValue;
+            string sinceStr = config.ContainsKey("since") ? config["since"] : "";
+            string[] dateFmts = { "yyyy-MM-dd", "yyyy/MM/dd", "yyyy/M/d", "M/d/yyyy" };
+            if (!string.IsNullOrEmpty(sinceStr))
+                DateTime.TryParseExact(sinceStr, dateFmts,
+                    CultureInfo.InvariantCulture, DateTimeStyles.None, out sinceDate);
+
+            _exported = new HashSet<string>(knownIds);
+            PurgeStaleMailIds(outputRoot, _exported);
+
+            string smtp = (filterAccount ?? "").ToLower();
+            string filterFolder = config.ContainsKey("outlook_folder") ? config["outlook_folder"] : "";
+
+            foreach (var ci in cache)
+            {
+                if (CancelRequested) break;
+
+                // Folder path check (cache may contain items from multiple folders)
+                if (!string.IsNullOrEmpty(filterFolder) &&
+                    !string.Equals(ci.FolderPath, filterFolder, StringComparison.OrdinalIgnoreCase))
+                    continue;
+
+                // Per-profile date check
+                if (sinceDate > DateTime.MinValue && ci.ReceivedTime < sinceDate) continue;
+
+                // Already exported
+                if (_exported.Contains(ci.EntryID)) continue;
+
+                // Keyword match in memory
+                if (words.Count > 0)
+                {
+                    string text = ci.SubjectLower + "\n" + ci.BodyLower + "\n" + ci.SenderEmailLower;
+                    if (mode == "and")
+                    {
+                        bool allMatch = true;
+                        foreach (var kw in words)
+                            if (!text.Contains(kw)) { allMatch = false; break; }
+                        if (!allMatch) continue;
+                    }
+                    else
+                    {
+                        bool anyMatch = false;
+                        foreach (var kw in words)
+                            if (text.Contains(kw)) { anyMatch = true; break; }
+                        if (!anyMatch) continue;
+                    }
+                }
+
+                // Fetch live COM object and export
+                try
+                {
+                    dynamic mail = _olNs.GetItemFromID(ci.EntryID);
+                    string folderRoot;
+                    if (_flatOutput)
+                        folderRoot = outputRoot;
+                    else
+                        folderRoot = Path.Combine(outputRoot,
+                            SafeName(smtp) + NormalizeFolderPath(ci.FolderPath));
+                    Directory.CreateDirectory(folderRoot);
+
+                    var sr = ExportAndBuildResult(mail, folderRoot, outputRoot, smtp);
+                    if (sr != null)
+                    {
+                        results.Add(sr);
+                        _exported.Add(ci.EntryID);
+                        OnProgress(results.Count, sr.Subject);
+                    }
+                }
+                catch { }
+            }
+            return results;
         }
 
         ScanResult ExportAndBuildResult(dynamic mail, string folderRoot, string exportRoot, string smtp)

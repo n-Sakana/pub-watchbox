@@ -145,46 +145,124 @@ namespace WatchBox
             {
                 int totalAdded = 0;
                 int profileCount = Config.ProfileCount;
-                MailScanner sharedMailScanner = null;
+                var mailScanner = new MailScanner();
+                _activeScanner = mailScanner;
+
+                // Collect unique (account, folder) keys and their broadest date filter
+                var scanKeys = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+                var mailProfiles = new List<int>();
+                var folderProfiles = new List<int>();
 
                 for (int i = 0; i < profileCount; i++)
                 {
+                    if (string.IsNullOrEmpty(Config.PGet(i, "output_root"))) continue;
+                    if (Config.PGet(i, "type", "mail") == "folder")
+                    { folderProfiles.Add(i); continue; }
+                    mailProfiles.Add(i);
+
+                    string key = Config.PGet(i, "account").ToLower() + "\t" +
+                        Config.PGet(i, "outlook_folder");
+                    if (!scanKeys.ContainsKey(key)) scanKeys[key] = null;
+                }
+
+                // For each unique key, compute broadest date filter
+                foreach (var key in new List<string>(scanKeys.Keys))
+                {
+                    DateTime earliest = DateTime.MaxValue;
+                    bool needAll = false;
+                    foreach (int i in mailProfiles)
+                    {
+                        string k = Config.PGet(i, "account").ToLower() + "\t" +
+                            Config.PGet(i, "outlook_folder");
+                        if (!string.Equals(k, key, StringComparison.OrdinalIgnoreCase)) continue;
+
+                        DateTime dt;
+                        string since = Config.PGet(i, "since");
+                        string lastScan = Config.PGet(i, "last_scan");
+                        string[] fmts = { "yyyy-MM-dd", "yyyy/MM/dd", "yyyy/M/d", "M/d/yyyy" };
+                        if (!string.IsNullOrEmpty(since) && DateTime.TryParseExact(since, fmts,
+                            CultureInfo.InvariantCulture, DateTimeStyles.None, out dt))
+                        { if (dt < earliest) earliest = dt; }
+                        else if (!string.IsNullOrEmpty(lastScan) && DateTime.TryParseExact(
+                            lastScan, "yyyy-MM-dd", CultureInfo.InvariantCulture,
+                            DateTimeStyles.None, out dt) &&
+                            ManifestIO.LoadIds(Config.PGet(i, "output_root")).Count > 0)
+                        { dt = dt.AddDays(-1); if (dt < earliest) earliest = dt; }
+                        else needAll = true;
+                    }
+                    scanKeys[key] = needAll || earliest == DateTime.MaxValue ? null
+                        : string.Format("[ReceivedTime]>='{0:yyyy/MM/dd} 00:00'", earliest);
+                }
+
+                // Phase 1: Scan each unique folder once, cache items
+                var caches = new Dictionary<string, List<CachedMailItem>>(
+                    StringComparer.OrdinalIgnoreCase);
+                int scanIdx = 0;
+                foreach (var kv in scanKeys)
+                {
                     if (_cancelRequested) break;
-                    string root = Config.PGet(i, "output_root");
-                    if (string.IsNullOrEmpty(root)) continue;
-                    string pname = Config.PGet(i, "name", "Profile " + i);
-
-                    // Show which profile is being scanned
+                    scanIdx++;
+                    var parts = kv.Key.Split('\t');
+                    string label = parts.Length > 1 && parts[1].Length > 0
+                        ? parts[1].Substring(parts[1].LastIndexOf('\\') + 1) : "All";
                     Dispatcher.BeginInvoke(new Action(() =>
-                        _status.Text = string.Format("({0}/{1}) {2}...",
-                            i + 1, profileCount, pname)));
+                        _status.Text = string.Format("Scanning {0} ({1}/{2})...",
+                            label, scanIdx, scanKeys.Count)));
 
-                    string type = Config.PGet(i, "type", "mail");
-                    SourceScanner scanner;
-                    if (type == "folder")
-                    {
-                        scanner = new FolderScanner();
-                    }
-                    else
-                    {
-                        // Reuse COM connection across mail profiles
-                        if (sharedMailScanner == null)
-                            sharedMailScanner = new MailScanner();
-                        scanner = sharedMailScanner;
-                    }
-                    _activeScanner = scanner;
-                    int profileIdx = i;
+                    var cfg = new Dictionary<string, string>();
+                    cfg["account"] = parts[0];
+                    cfg["outlook_folder"] = parts.Length > 1 ? parts[1] : "";
+                    caches[kv.Key] = mailScanner.ScanBulk(cfg, kv.Value);
+                }
+
+                // Phase 2: Per-profile keyword matching and export from cache
+                for (int p = 0; p < mailProfiles.Count; p++)
+                {
+                    if (_cancelRequested) break;
+                    int i = mailProfiles[p];
+                    string pname = Config.PGet(i, "name", "Profile " + i);
+                    int idx = i;
+                    Dispatcher.BeginInvoke(new Action(() =>
+                        _status.Text = string.Format("({0}/{1}) [{2}]...",
+                            idx + 1, profileCount, pname)));
+
+                    string key = Config.PGet(i, "account").ToLower() + "\t" +
+                        Config.PGet(i, "outlook_folder");
+                    List<CachedMailItem> cache;
+                    if (!caches.TryGetValue(key, out cache)) continue;
+
                     Action<int, string> progress = (c, s) =>
                         Dispatcher.BeginInvoke(new Action(() =>
                         {
                             if (s != null && s.Length > 36) s = s.Substring(0, 36);
                             _status.Text = string.Format("({0}/{1}) [{2}] {3}: {4}",
-                                profileIdx + 1, profileCount, pname, c, s);
+                                idx + 1, profileCount, pname, c, s);
                         }));
-                    var result = ProfileRunner.Run(i, scanner, progress);
-                    _activeScanner = null;
-                    totalAdded += result.Added;
+                    totalAdded += ProfileRunner.RunFromCache(
+                        i, mailScanner, cache, progress).Added;
                 }
+
+                // Phase 3: Folder-type profiles (individual scan)
+                foreach (int i in folderProfiles)
+                {
+                    if (_cancelRequested) break;
+                    string pname = Config.PGet(i, "name", "Profile " + i);
+                    int idx = i;
+                    Dispatcher.BeginInvoke(new Action(() =>
+                        _status.Text = string.Format("({0}/{1}) {2}...",
+                            idx + 1, profileCount, pname)));
+                    var fs = new FolderScanner();
+                    _activeScanner = fs;
+                    Action<int, string> progress = (c, s) =>
+                        Dispatcher.BeginInvoke(new Action(() =>
+                        {
+                            if (s != null && s.Length > 36) s = s.Substring(0, 36);
+                            _status.Text = string.Format("({0}/{1}) [{2}] {3}: {4}",
+                                idx + 1, profileCount, pname, c, s);
+                        }));
+                    totalAdded += ProfileRunner.Run(i, fs, progress).Added;
+                }
+                _activeScanner = null;
                 return totalAdded;
             },
             total =>

@@ -71,6 +71,41 @@ namespace WatchBox
             return new RunResult { Added = added, Modified = modified, Removed = removedIds.Count };
         }
 
+        // Run a mail profile using pre-cached folder data (for grouped scan).
+        public static RunResult RunFromCache(int profileIndex, MailScanner scanner,
+            List<CachedMailItem> cache, Action<int, string> onProgress = null)
+        {
+            string outputRoot = (Config.PGet(profileIndex, "output_root") ?? "").Trim();
+            if (string.IsNullOrEmpty(outputRoot)) return new RunResult();
+
+            bool logEnabled = Config.PGet(profileIndex, "log_enabled", "1") == "1";
+            bool hideManifest = Config.PGet(profileIndex, "manifest_hidden", "1") == "1";
+            var config = BuildConfig(profileIndex);
+
+            if (onProgress != null) scanner.ProgressChanged += onProgress;
+
+            var knownIds = ManifestIO.LoadIds(outputRoot);
+            var newItems = scanner.ExportFromCache(cache, config, knownIds);
+
+            int added = 0, modified = 0;
+            foreach (var item in newItems)
+            {
+                bool wasKnown = knownIds.Contains(item.ItemId);
+                WriteManifestRow("mail", outputRoot, item, config, hideManifest);
+                if (logEnabled)
+                    ChangeLog.Append(outputRoot, wasKnown ? "modified" : "added",
+                        item.ItemId, item.Name);
+                if (wasKnown) modified++; else added++;
+            }
+
+            if (!scanner.CancelRequested)
+                Config.PSet(profileIndex, "last_scan",
+                    DateTime.UtcNow.ToString("yyyy-MM-dd"));
+
+            if (onProgress != null) scanner.ProgressChanged -= onProgress;
+            return new RunResult { Added = added, Modified = modified, Removed = 0 };
+        }
+
         static void WriteManifestRow(string type, string outputRoot,
             ScanResult item, Dictionary<string, string> config, bool hide)
         {
