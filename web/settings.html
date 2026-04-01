@@ -33,7 +33,7 @@
 <div class="form-scroll">
     <!-- Profile bar -->
     <div class="fr" style="margin-bottom:8px;">
-        <fluent-select id="profileSelect" style="flex:1;" onchange="Settings.onProfileChange()"></fluent-select>
+        <fluent-select id="profileSelect" style="flex:1;"></fluent-select>
         <fluent-button size="small" onclick="Settings.addProfile()">+</fluent-button>
         <fluent-button size="small" onclick="Settings.removeProfile()">&minus;</fluent-button>
     </div>
@@ -44,7 +44,7 @@
     </div>
     <div class="fr">
         <span class="fl">Type</span>
-        <fluent-select id="fType" size="small" style="width:100px;flex:none;" onchange="Settings.onTypeChange()">
+        <fluent-select id="fType" size="small" style="width:100px;flex:none;">
             <fluent-option value="mail">Mail</fluent-option>
             <fluent-option value="folder">Folder</fluent-option>
         </fluent-select>
@@ -70,7 +70,7 @@
         <fluent-tab-panel id="tabSourcePanel">
             <div class="fr source-mail">
                 <span class="fl">Account</span>
-                <fluent-select id="fAccount" size="small" style="flex:1;" onchange="Settings.onAccountChange()">
+                <fluent-select id="fAccount" size="small" style="flex:1;">
                     <fluent-option value="">(All)</fluent-option>
                 </fluent-select>
             </div>

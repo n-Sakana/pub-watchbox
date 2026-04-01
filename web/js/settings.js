@@ -18,6 +18,12 @@ const Settings = {
         Bridge.on('closed', () => window.close());
 
         Bridge.send('getConfig');
+
+        // Use addEventListener instead of HTML onchange attributes
+        // (fluent-select custom elements may not fire HTML attribute handlers reliably)
+        document.getElementById('profileSelect').addEventListener('change', () => this.onProfileChange());
+        document.getElementById('fType').addEventListener('change', () => this.onTypeChange());
+        document.getElementById('fAccount').addEventListener('change', () => this.onAccountChange());
     },
 
     // --- Config loaded from C# ---
