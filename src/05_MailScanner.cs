@@ -194,27 +194,12 @@ namespace WatchBox
             _exported = new HashSet<string>(knownIds);
             PurgeStaleMailIds(outputRoot, _exported);
 
-            string filter = null;
-            DateTime dt;
-            string[] dateFmts = { "yyyy-MM-dd", "yyyy/MM/dd", "yyyy/M/d", "M/d/yyyy" };
-
-            // Priority 1: explicit user-configured "since" date
-            if (!string.IsNullOrEmpty(sinceDate) && DateTime.TryParseExact(sinceDate, dateFmts,
-                CultureInfo.InvariantCulture, DateTimeStyles.None, out dt))
-                filter = string.Format("[ReceivedTime]>='{0:yyyy/MM/dd} 00:00'", dt);
-            else if (!string.IsNullOrEmpty(sinceDate))
-                System.Diagnostics.Debug.WriteLine(
-                    "MailScanner: failed to parse since date: " + sinceDate);
-
-            // Priority 2: last successful scan date (only when prior exports exist)
-            if (filter == null && _exported.Count > 0)
-            {
-                string lastScan = config.ContainsKey("last_scan") ? config["last_scan"] : "";
-                if (!string.IsNullOrEmpty(lastScan) && DateTime.TryParseExact(lastScan,
-                    "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out dt))
-                    filter = string.Format("[ReceivedTime]>='{0:yyyy/MM/dd}'", dt.AddDays(-1));
-            }
-            // Priority 3: no prior exports — no filter, full scan
+            // Build two separate filters:
+            // 1. Date filter (Jet syntax, local time) — accurate timezone handling
+            // 2. Keyword filter (DASL syntax) — server-side text search
+            // Cannot mix Jet and DASL in one Restrict(), so chain two calls.
+            string dateFilter = BuildDateFilter(sinceDate, config);
+            string keywordFilter = BuildKeywordFilter();
 
             // When account is empty, scan the first account only to avoid
             // exporting every mailbox into a single profile's output_root
@@ -245,10 +230,10 @@ namespace WatchBox
                     {
                         dynamic startFolder = FindFolder(store.GetRootFolder(), filterFolder);
                         if (startFolder != null)
-                            ScanTree(startFolder, outputRoot, smtp, filter, results);
+                            ScanTree(startFolder, outputRoot, smtp, dateFilter, keywordFilter, results, false);
                     }
                     else
-                        ScanTree(store.GetRootFolder(), outputRoot, smtp, filter, results);
+                        ScanTree(store.GetRootFolder(), outputRoot, smtp, dateFilter, keywordFilter, results, true);
                 }
                 catch { }
             }
@@ -264,8 +249,9 @@ namespace WatchBox
 
         // --- Internal tree scan ---
 
-        void ScanTree(dynamic folder, string outputRoot, string smtp, string filter,
-            List<ScanResult> results)
+        void ScanTree(dynamic folder, string outputRoot, string smtp,
+            string dateFilter, string keywordFilter,
+            List<ScanResult> results, bool recurse = true)
         {
             try
             {
@@ -278,7 +264,9 @@ namespace WatchBox
                 Directory.CreateDirectory(folderRoot);
 
                 dynamic items = folder.Items;
-                if (filter != null) items = items.Restrict(filter);
+                // Chain two Restrict() calls: date (Jet, local time) then keywords (DASL)
+                if (dateFilter != null) items = items.Restrict(dateFilter);
+                if (keywordFilter != null) items = items.Restrict(keywordFilter);
 
                 dynamic item = items.GetFirst();
                 while (item != null)
@@ -290,9 +278,6 @@ namespace WatchBox
                             string eid = (string)item.EntryID;
                             if (!_exported.Contains(eid))
                             {
-                                if (_filterWords.Count > 0 && !MatchesFilter(item))
-                                    goto SkipItem;
-
                                 // Export files immediately (msg, body, meta, attachments)
                                 var sr = ExportAndBuildResult(item, folderRoot, outputRoot, smtp);
                                 if (sr != null)
@@ -301,22 +286,20 @@ namespace WatchBox
                                     _exported.Add(eid);
                                     OnProgress(results.Count, sr.Subject);
                                 }
-                                SkipItem:;
                             }
                         }
                     }
                     catch { }
                     if (CancelRequested) break;
                     _itemCount++;
-                    if (_itemCount % 10 == 0) System.Threading.Thread.Sleep(1);
                     try { item = items.GetNext(); } catch { break; }
                 }
 
-                if (!CancelRequested)
+                if (recurse && !CancelRequested)
                     foreach (dynamic child in folder.Folders)
                     {
                         if (CancelRequested) break;
-                        ScanTree(child, outputRoot, smtp, filter, results);
+                        ScanTree(child, outputRoot, smtp, dateFilter, keywordFilter, results, true);
                     }
             }
             catch { }
@@ -360,6 +343,83 @@ namespace WatchBox
                 };
             }
             catch { return null; }
+        }
+
+        // --- Filter construction ---
+
+        // Build date filter using Jet syntax (uses local time, not UTC).
+        // Kept separate from keyword filter because Jet and DASL cannot be
+        // mixed in a single Restrict() call.
+        string BuildDateFilter(string sinceDate, Dictionary<string, string> config)
+        {
+            DateTime dt;
+            string[] dateFmts = { "yyyy-MM-dd", "yyyy/MM/dd", "yyyy/M/d", "M/d/yyyy" };
+
+            // Priority 1: explicit user-configured "since" date
+            if (!string.IsNullOrEmpty(sinceDate) && DateTime.TryParseExact(sinceDate, dateFmts,
+                CultureInfo.InvariantCulture, DateTimeStyles.None, out dt))
+                return string.Format("[ReceivedTime]>='{0:yyyy/MM/dd} 00:00'", dt);
+
+            if (!string.IsNullOrEmpty(sinceDate))
+                System.Diagnostics.Debug.WriteLine(
+                    "MailScanner: failed to parse since date: " + sinceDate);
+
+            // Priority 2: last successful scan date (only when prior exports exist)
+            if (_exported.Count > 0)
+            {
+                string lastScan = config.ContainsKey("last_scan") ? config["last_scan"] : "";
+                if (!string.IsNullOrEmpty(lastScan) && DateTime.TryParseExact(lastScan,
+                    "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out dt))
+                    return string.Format("[ReceivedTime]>='{0:yyyy/MM/dd} 00:00'",
+                        dt.AddDays(-1));
+            }
+            // Priority 3: no date filter
+            return null;
+        }
+
+        // Build keyword filter using DASL syntax for server-side text search.
+        // This avoids per-item COM calls for Body/Subject/Sender.
+        string BuildKeywordFilter()
+        {
+            if (_filterWords.Count == 0) return null;
+
+            const string subj = "\"urn:schemas:httpmail:subject\"";
+            const string body = "\"urn:schemas:httpmail:textdescription\"";
+            const string from = "\"urn:schemas:httpmail:fromemail\"";
+            var parts = new List<string>();
+
+            if (_filterMode == "and")
+            {
+                // Each keyword must appear somewhere in subject/body/sender
+                foreach (var kw in _filterWords)
+                {
+                    string esc = DaslEscape(kw);
+                    parts.Add(string.Format(
+                        "({0} LIKE '%{1}%' OR {2} LIKE '%{1}%' OR {3} LIKE '%{1}%')",
+                        subj, esc, body, from));
+                }
+            }
+            else
+            {
+                // Any keyword matches in subject/body/sender
+                var orClauses = new List<string>();
+                foreach (var kw in _filterWords)
+                {
+                    string esc = DaslEscape(kw);
+                    orClauses.Add(string.Format("{0} LIKE '%{1}%'", subj, esc));
+                    orClauses.Add(string.Format("{0} LIKE '%{1}%'", body, esc));
+                    orClauses.Add(string.Format("{0} LIKE '%{1}%'", from, esc));
+                }
+                parts.Add("(" + string.Join(" OR ", orClauses.ToArray()) + ")");
+            }
+
+            return "@SQL=" + string.Join(" AND ", parts.ToArray());
+        }
+
+        // Escape single quotes in DASL string values
+        static string DaslEscape(string value)
+        {
+            return (value ?? "").Replace("'", "''");
         }
 
         // --- Helpers ---
@@ -462,6 +522,8 @@ namespace WatchBox
             File.WriteAllText(path, json, Encoding.UTF8);
         }
 
+        // Fallback keyword filter for cases where DASL filtering cannot be used.
+        // Normally keywords are pushed into Restrict() via BuildDaslFilter().
         bool MatchesFilter(dynamic mail)
         {
             if (_filterWords.Count == 0) return true;
