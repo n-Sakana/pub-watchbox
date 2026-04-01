@@ -55,9 +55,12 @@ const Settings = {
         sel.blur(); // close native dropdown
         this.currentIdx = parseInt(sel.value);
         this.loadProfile(this.currentIdx);
-        // Reload folders for selected account
-        const acct = document.getElementById('fAccount').value;
-        Bridge.send('getFolders', { account: acct });
+        // Reload folders using model value (DOM may lag behind after loadProfile)
+        const p = this.profiles[this.currentIdx];
+        const acct = p ? (p.account || '') : '';
+        requestAnimationFrame(() => {
+            Bridge.send('getFolders', { account: acct });
+        });
     },
 
     loadProfile(idx) {
@@ -159,13 +162,14 @@ const Settings = {
             opt.textContent = a;
             sel.appendChild(opt);
         });
-        this.selectOption('fAccount', profileVal);
-
-        // Load folders for current account (use model value, not DOM which may lag)
-        Bridge.send('getFolders', { account: profileVal || sel.value });
-
-        // Mark ready after accounts are loaded (initial async load complete)
-        if (!this._ready) this._ready = true;
+        // Delay selection until fluent-select recognizes new options
+        requestAnimationFrame(() => {
+            this.selectOption('fAccount', profileVal);
+            // Load folders using model value (DOM may not have caught up yet)
+            Bridge.send('getFolders', { account: profileVal });
+            // Mark ready after accounts are loaded (initial async load complete)
+            if (!this._ready) this._ready = true;
+        });
     },
 
     onFoldersLoaded(data) {
@@ -179,11 +183,18 @@ const Settings = {
             opt.textContent = f.display;
             sel.appendChild(opt);
         });
-        this.selectOption('fOutlookFolder', profileVal);
+        // Delay selection until fluent-select recognizes new options
+        requestAnimationFrame(() => {
+            this.selectOption('fOutlookFolder', profileVal);
+        });
     },
 
     onAccountChange() {
         const acct = document.getElementById('fAccount').value;
+        // Write to model immediately so value is not lost
+        if (this._ready && this.currentIdx >= 0 && this.currentIdx < this.profiles.length) {
+            this.profiles[this.currentIdx].account = acct;
+        }
         Bridge.send('getFolders', { account: acct });
     },
 
@@ -326,8 +337,22 @@ const Settings = {
 
     selectOption(id, value) {
         const sel = document.getElementById(id);
-        // Fluent select: set value directly
-        sel.value = value || '';
+        const val = value || '';
+        // Fluent-select: find matching option and set selectedIndex + selected attr
+        const opts = sel.querySelectorAll('fluent-option');
+        let found = -1;
+        opts.forEach((opt, i) => {
+            if (opt.value === val) {
+                found = i;
+                opt.setAttribute('selected', '');
+            } else {
+                opt.removeAttribute('selected');
+            }
+        });
+        if (found >= 0) {
+            sel.selectedIndex = found;
+        }
+        sel.value = val;
     }
 };
 

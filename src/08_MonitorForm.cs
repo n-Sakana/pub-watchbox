@@ -290,8 +290,22 @@ namespace WatchBox
         {
             var thread = new Thread(() =>
             {
-                int result = work();
-                Dispatcher.BeginInvoke(new Action(() => onComplete(result)));
+                try
+                {
+                    int result = work();
+                    Dispatcher.BeginInvoke(new Action(() => onComplete(result)));
+                }
+                catch (Exception ex)
+                {
+                    System.Diagnostics.Debug.WriteLine(
+                        "RunOnStaThread error: " + ex.ToString());
+                    Dispatcher.BeginInvoke(new Action(() =>
+                    {
+                        _status.Text = "Error: " + ex.Message;
+                        _pulling = false;
+                        SetPullButton(false);
+                    }));
+                }
             });
             thread.SetApartmentState(ApartmentState.STA);
             thread.IsBackground = true;

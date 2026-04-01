@@ -39,8 +39,9 @@ namespace WatchBox
             foreach (var line in File.ReadAllLines(path, Encoding.UTF8))
             {
                 if (string.IsNullOrEmpty(line)) continue;
-                int sep = line.IndexOf(',');
-                string id = sep > 0 ? line.Substring(0, sep) : line;
+                var cols = CsvSplit(line);
+                if (cols.Length < 1) continue;
+                string id = cols[0];
                 if (id == "entry_id" || id == "item_id") continue;
                 ids.Add(id);
             }
@@ -57,7 +58,7 @@ namespace WatchBox
             foreach (var line in File.ReadAllLines(path, Encoding.UTF8))
             {
                 if (string.IsNullOrEmpty(line)) continue;
-                var cols = line.Split(',');
+                var cols = CsvSplit(line);
                 if (cols.Length < 2) continue;
                 if (cols[0] == "entry_id" || cols[0] == "item_id") continue;
                 rows[cols[0]] = cols;
@@ -75,7 +76,7 @@ namespace WatchBox
             foreach (var line in File.ReadAllLines(path, Encoding.UTF8))
             {
                 if (string.IsNullOrEmpty(line)) continue;
-                var cols = line.Split(',');
+                var cols = CsvSplit(line);
                 if (cols.Length < 7 || cols[0] == "item_id") continue;
                 rows[cols[0]] = new FolderManifestRow {
                     ItemId = cols[0],
@@ -106,14 +107,14 @@ namespace WatchBox
                 entryId,
                 senderEmail,
                 senderName,
-                CsvSafe(subject),
+                CsvQuote(subject),
                 receivedAt.ToString("yyyy-MM-dd\\THH:mm:ss"),
                 folderPath,
                 bodyPath,
                 msgPath,
                 attachmentPaths,
                 mailFolder,
-                CsvSafe(bodyText)
+                CsvQuote(bodyText)
             });
             File.AppendAllText(csvPath, line + Environment.NewLine, new UTF8Encoding(true));
         }
@@ -131,7 +132,7 @@ namespace WatchBox
 
             string line = string.Join(",", new[] {
                 itemId,
-                CsvSafe(fileName),
+                CsvQuote(fileName),
                 filePath,
                 folderPath,
                 relativePath,
@@ -171,7 +172,7 @@ namespace WatchBox
             {
                 lines.Add(string.Join(",", new[] {
                     r.ItemId,
-                    CsvSafe(r.FileName),
+                    CsvQuote(r.FileName),
                     r.FilePath,
                     r.FolderPath,
                     r.RelativePath,
@@ -199,7 +200,7 @@ namespace WatchBox
                 if (string.IsNullOrEmpty(line)) continue;
                 if (line.ToLower().Contains(q))
                 {
-                    var cols = line.Split(',');
+                    var cols = CsvSplit(line);
                     if (cols[0] == "entry_id" || cols[0] == "item_id") continue;
                     results.Add(cols);
                 }
@@ -217,7 +218,7 @@ namespace WatchBox
             foreach (var line in File.ReadAllLines(path, Encoding.UTF8))
             {
                 if (string.IsNullOrEmpty(line)) continue;
-                var cols = line.Split(',');
+                var cols = CsvSplit(line);
                 if (cols.Length < 5 || cols[0] == "entry_id") continue;
                 DateTime dt;
                 if (DateTime.TryParse(cols[4], out dt) && dt > latest)
@@ -256,9 +257,49 @@ namespace WatchBox
             }
         }
 
-        static string CsvSafe(string value)
+        // Quote a CSV field if it contains comma, quote, or newline (RFC 4180)
+        static string CsvQuote(string value)
         {
-            return (value ?? "").Replace(",", " ").Replace("\r", " ").Replace("\n", " ");
+            if (value == null) return "";
+            if (value.IndexOfAny(new[] { ',', '"', '\r', '\n' }) >= 0)
+                return "\"" + value.Replace("\"", "\"\"") + "\"";
+            return value;
+        }
+
+        // Split a CSV line respecting quoted fields (RFC 4180)
+        public static string[] CsvSplit(string line)
+        {
+            var fields = new List<string>();
+            int i = 0;
+            while (i <= line.Length)
+            {
+                if (i == line.Length) { fields.Add(""); break; }
+                if (line[i] == '"')
+                {
+                    i++;
+                    var sb = new StringBuilder();
+                    while (i < line.Length)
+                    {
+                        if (line[i] == '"')
+                        {
+                            if (i + 1 < line.Length && line[i + 1] == '"')
+                                { sb.Append('"'); i += 2; }
+                            else { i++; break; }
+                        }
+                        else { sb.Append(line[i]); i++; }
+                    }
+                    fields.Add(sb.ToString());
+                    if (i < line.Length && line[i] == ',') i++;
+                }
+                else
+                {
+                    int sep = line.IndexOf(',', i);
+                    if (sep < 0) { fields.Add(line.Substring(i)); break; }
+                    fields.Add(line.Substring(i, sep - i));
+                    i = sep + 1;
+                }
+            }
+            return fields.ToArray();
         }
     }
 

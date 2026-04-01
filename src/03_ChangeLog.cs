@@ -20,16 +20,20 @@ namespace WatchBox
             string line = string.Join(",", new[] {
                 DateTime.Now.ToString("yyyy-MM-dd\\THH:mm:ss"),
                 action,
-                CsvSafe(itemId),
-                CsvSafe(name),
-                CsvSafe(details)
+                CsvQuote(itemId),
+                CsvQuote(name),
+                CsvQuote(details)
             });
             File.AppendAllText(csvPath, line + Environment.NewLine, new UTF8Encoding(true));
         }
 
-        static string CsvSafe(string value)
+        // Quote a CSV field if it contains comma, quote, or newline (RFC 4180)
+        static string CsvQuote(string value)
         {
-            return (value ?? "").Replace(",", " ").Replace("\r", " ").Replace("\n", " ");
+            if (value == null) return "";
+            if (value.IndexOfAny(new[] { ',', '"', '\r', '\n' }) >= 0)
+                return "\"" + value.Replace("\"", "\"\"") + "\"";
+            return value;
         }
     }
 }
