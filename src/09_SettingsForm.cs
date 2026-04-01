@@ -200,7 +200,9 @@ namespace WatchBox
                         sb.AppendFormat(",\"recurse\":\"{0}\"", JsonEsc(ColVal(cols, 10, "1")));
                         sb.AppendFormat(",\"since\":\"{0}\"", JsonEsc(ColVal(cols, 11, "")));
                         sb.AppendFormat(",\"short_dirname\":\"{0}\"", JsonEsc(ColVal(cols, 12, "0")));
-                        sb.AppendFormat(",\"notify\":\"1\",\"log_enabled\":\"1\"");
+                        sb.AppendFormat(",\"auto_unzip\":\"{0}\"", JsonEsc(ColVal(cols, 13, "0")));
+                        sb.AppendFormat(",\"notify\":\"{0}\"", JsonEsc(ColVal(cols, 14, "1")));
+                        sb.AppendFormat(",\"log_enabled\":\"{0}\"", JsonEsc(ColVal(cols, 15, "1")));
                         sb.Append("}");
                         imported.Add(sb.ToString());
                     }
@@ -235,7 +237,8 @@ namespace WatchBox
                     var lines = new List<string>();
                     lines.Add("name,type,output_root,account,outlook_folder," +
                         "source_folder,manifest_hidden,filters,filter_mode," +
-                        "flat_output,recurse,since,short_dirname");
+                        "flat_output,recurse,since,short_dirname," +
+                        "auto_unzip,notify,log_enabled");
                     foreach (var pJson in profiles)
                     {
                         lines.Add(string.Join(",", new[] {
@@ -251,7 +254,10 @@ namespace WatchBox
                             ExtractJsonString(pJson, "flat_output"),
                             ExtractJsonString(pJson, "recurse"),
                             ExtractJsonString(pJson, "since"),
-                            ExtractJsonString(pJson, "short_dirname")
+                            ExtractJsonString(pJson, "short_dirname"),
+                            ExtractJsonString(pJson, "auto_unzip"),
+                            ExtractJsonString(pJson, "notify"),
+                            ExtractJsonString(pJson, "log_enabled")
                         }));
                     }
                     File.WriteAllLines(dlg.FileName, lines.ToArray(), Encoding.UTF8);

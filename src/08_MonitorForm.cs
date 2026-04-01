@@ -71,6 +71,11 @@ namespace WatchBox
                 var f = new SettingsWindow();
                 f.Owner = this;
                 f.ShowDialog();
+                if (_watching)
+                {
+                    StopWatching();
+                    StartWatching();
+                }
             };
             btnViewer.Click += (s, e) => { var w = new SearchWindow(); w.Owner = this; w.Show(); };
 
