@@ -144,22 +144,42 @@ namespace WatchBox
             RunOnStaThread(() =>
             {
                 int totalAdded = 0;
-                for (int i = 0; i < Config.ProfileCount; i++)
+                int profileCount = Config.ProfileCount;
+                MailScanner sharedMailScanner = null;
+
+                for (int i = 0; i < profileCount; i++)
                 {
                     if (_cancelRequested) break;
                     string root = Config.PGet(i, "output_root");
                     if (string.IsNullOrEmpty(root)) continue;
                     string pname = Config.PGet(i, "name", "Profile " + i);
 
+                    // Show which profile is being scanned
+                    Dispatcher.BeginInvoke(new Action(() =>
+                        _status.Text = string.Format("({0}/{1}) {2}...",
+                            i + 1, profileCount, pname)));
+
                     string type = Config.PGet(i, "type", "mail");
-                    SourceScanner scanner = type == "folder"
-                        ? (SourceScanner)new FolderScanner() : new MailScanner();
+                    SourceScanner scanner;
+                    if (type == "folder")
+                    {
+                        scanner = new FolderScanner();
+                    }
+                    else
+                    {
+                        // Reuse COM connection across mail profiles
+                        if (sharedMailScanner == null)
+                            sharedMailScanner = new MailScanner();
+                        scanner = sharedMailScanner;
+                    }
                     _activeScanner = scanner;
+                    int profileIdx = i;
                     Action<int, string> progress = (c, s) =>
                         Dispatcher.BeginInvoke(new Action(() =>
                         {
                             if (s != null && s.Length > 36) s = s.Substring(0, 36);
-                            _status.Text = string.Format("[{0}] {1}: {2}", pname, c, s);
+                            _status.Text = string.Format("({0}/{1}) [{2}] {3}: {4}",
+                                profileIdx + 1, profileCount, pname, c, s);
                         }));
                     var result = ProfileRunner.Run(i, scanner, progress);
                     _activeScanner = null;

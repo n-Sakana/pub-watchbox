@@ -201,7 +201,7 @@ namespace WatchBox
             // Priority 1: explicit user-configured "since" date
             if (!string.IsNullOrEmpty(sinceDate) && DateTime.TryParseExact(sinceDate, dateFmts,
                 CultureInfo.InvariantCulture, DateTimeStyles.None, out dt))
-                filter = string.Format("[ReceivedTime]>='{0:yyyy/MM/dd}'", dt);
+                filter = string.Format("[ReceivedTime]>='{0:yyyy/MM/dd} 00:00'", dt);
             else if (!string.IsNullOrEmpty(sinceDate))
                 System.Diagnostics.Debug.WriteLine(
                     "MailScanner: failed to parse since date: " + sinceDate);
