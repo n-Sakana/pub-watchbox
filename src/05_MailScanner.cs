@@ -150,6 +150,12 @@ namespace WatchBox
                 {
                     try
                     {
+                        // Only include mail folders (DefaultItemType == olMailItem == 0)
+                        if ((int)child.DefaultItemType != 0) continue;
+                        // Skip hidden system folders (PR_ATTR_HIDDEN)
+                        try { if ((bool)child.PropertyAccessor.GetProperty(
+                            "http://schemas.microsoft.com/mapi/proptag/0x10F4000B")) continue; }
+                        catch { }
                         string indent = new string(' ', depth * 2);
                         list.Add(new[] { prefix + indent + (string)child.Name, (string)child.FolderPath });
                         CollectFolders(child, depth + 1, prefix, list);
