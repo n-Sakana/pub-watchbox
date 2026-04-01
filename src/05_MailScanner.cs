@@ -191,35 +191,39 @@ namespace WatchBox
             string filter = null;
             DateTime dt;
             string[] dateFmts = { "yyyy-MM-dd", "yyyy/MM/dd", "yyyy/M/d", "M/d/yyyy" };
+
+            // Priority 1: explicit user-configured "since" date
             if (!string.IsNullOrEmpty(sinceDate) && DateTime.TryParseExact(sinceDate, dateFmts,
                 CultureInfo.InvariantCulture, DateTimeStyles.None, out dt))
                 filter = string.Format("[ReceivedTime]>='{0:yyyy/MM/dd}'", dt);
             else if (!string.IsNullOrEmpty(sinceDate))
                 System.Diagnostics.Debug.WriteLine(
                     "MailScanner: failed to parse since date: " + sinceDate);
-            else if (_exported.Count > 0)
-            {
-                // Already have data: use latest date from manifest to narrow scan
-                DateTime latest = ManifestIO.GetLatestMailDate(outputRoot);
-                if (latest > DateTime.MinValue)
-                    filter = string.Format("[ReceivedTime]>='{0:yyyy/MM/dd}'",
-                        latest.AddDays(-1));
-            }
-            else
-            {
-                // First run with no since filter: default to 30 days back
-                filter = string.Format("[ReceivedTime]>='{0:yyyy/MM/dd}'",
-                    DateTime.Now.AddDays(-30));
-            }
 
-            // Guard: if account is empty, skip scanning entirely to prevent
-            // exporting all accounts into a single profile's output_root
+            // Priority 2: last successful scan date (only when prior exports exist)
+            if (filter == null && _exported.Count > 0)
+            {
+                string lastScan = config.ContainsKey("last_scan") ? config["last_scan"] : "";
+                if (!string.IsNullOrEmpty(lastScan) && DateTime.TryParseExact(lastScan,
+                    "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out dt))
+                    filter = string.Format("[ReceivedTime]>='{0:yyyy/MM/dd}'", dt.AddDays(-1));
+            }
+            // Priority 3: no prior exports — no filter, full scan
+
+            // When account is empty, scan the first account only to avoid
+            // exporting every mailbox into a single profile's output_root
             if (string.IsNullOrEmpty(filterAccount))
             {
-                System.Diagnostics.Debug.WriteLine(
-                    "MailScanner: account filter is empty, skipping scan to prevent" +
-                    " exporting all mailboxes. Please select an account in settings.");
-                return results;
+                try
+                {
+                    foreach (dynamic acct in _olNs.Accounts)
+                    {
+                        try { filterAccount = ((string)acct.SmtpAddress).ToLower(); break; }
+                        catch { }
+                    }
+                }
+                catch { }
+                if (string.IsNullOrEmpty(filterAccount)) return results;
             }
 
             foreach (dynamic store in _olNs.Stores)
@@ -385,7 +389,12 @@ namespace WatchBox
 
         dynamic FindFolder(dynamic root, string targetPath)
         {
-            try { if ((string)root.FolderPath == targetPath) return root; } catch { }
+            try
+            {
+                if (string.Equals((string)root.FolderPath, targetPath,
+                    StringComparison.OrdinalIgnoreCase)) return root;
+            }
+            catch { }
             try
             {
                 foreach (dynamic child in root.Folders)
@@ -489,6 +498,12 @@ namespace WatchBox
             {
                 return ((string)store.GetRootFolder().PropertyAccessor.GetProperty(
                     "http://schemas.microsoft.com/mapi/proptag/0x39FE001E")).ToLower();
+            }
+            catch { }
+            try
+            {
+                return ((string)store.GetRootFolder().PropertyAccessor.GetProperty(
+                    "http://schemas.microsoft.com/mapi/proptag/0x39FE001F")).ToLower();
             }
             catch { }
             try { return ((string)store.DisplayName).ToLower(); } catch { return ""; }

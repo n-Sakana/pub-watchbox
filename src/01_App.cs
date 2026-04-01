@@ -88,7 +88,9 @@ namespace WatchBox
             // Mail directory naming
             "short_dirname",
             // Folder: auto-extract zip files
-            "auto_unzip"
+            "auto_unzip",
+            // Internal: last successful scan timestamp (managed by ProfileRunner)
+            "last_scan"
         };
 
         public static int ProfileCount

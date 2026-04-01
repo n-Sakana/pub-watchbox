@@ -10,18 +10,10 @@ namespace WatchBox
 {
     public class SettingsWindow : WebViewHost
     {
-        MailScanner _cachedScanner;
-
         public SettingsWindow()
             : base("Settings", "settings.html", 460, 560)
         {
             MinWidth = 380; MinHeight = 480;
-        }
-
-        MailScanner GetScanner()
-        {
-            if (_cachedScanner == null) _cachedScanner = new MailScanner();
-            return _cachedScanner;
         }
 
         protected override void HandleMessage(string action, string json)
@@ -81,6 +73,21 @@ namespace WatchBox
             {
                 var profiles = ExtractJsonArray(json, "profiles");
 
+                // Keys that affect scan behavior — changes require rescan
+                string[] scanKeys = { "account", "outlook_folder", "output_root",
+                    "since", "filter_mode", "filters", "flat_output", "short_dirname" };
+
+                // Capture old scan settings + last_scan per profile
+                var oldProfiles = new List<Dictionary<string, string>>();
+                for (int i = 0; i < Config.ProfileCount; i++)
+                {
+                    var old = new Dictionary<string, string>();
+                    foreach (var k in scanKeys)
+                        old[k] = Config.PGet(i, k);
+                    old["last_scan"] = Config.PGet(i, "last_scan");
+                    oldProfiles.Add(old);
+                }
+
                 // Clear existing profiles
                 while (Config.ProfileCount > 0)
                     Config.RemoveProfile(0);
@@ -95,6 +102,29 @@ namespace WatchBox
                         "short_dirname", "notify", "log_enabled", "manifest_hidden" };
                     foreach (var k in keys)
                         Config.PSet(idx, k, ExtractJsonString(pJson, k));
+
+                    // Check if any scan-affecting setting changed
+                    if (idx < oldProfiles.Count)
+                    {
+                        var old = oldProfiles[idx];
+                        bool changed = false;
+                        foreach (var k in scanKeys)
+                            if (old[k] != Config.PGet(idx, k)) { changed = true; break; }
+
+                        if (!changed)
+                        {
+                            Config.PSet(idx, "last_scan", old["last_scan"]);
+                        }
+                        else
+                        {
+                            // Scan settings changed — delete manifest so next Pull
+                            // does a clean full scan with the new settings
+                            string oldRoot = old["output_root"];
+                            string newRoot = Config.PGet(idx, "output_root");
+                            DeleteManifest(oldRoot);
+                            if (newRoot != oldRoot) DeleteManifest(newRoot);
+                        }
+                    }
                 }
                 Config.Save();
                 SendMessage("saveResult", "{\"ok\":true}");
@@ -112,7 +142,7 @@ namespace WatchBox
         {
             RunOnStaThread(() =>
             {
-                var scanner = GetScanner();
+                var scanner = new MailScanner();
                 var accounts = scanner.GetAccounts();
                 var sb = new StringBuilder();
                 sb.Append("{\"accounts\":[");
@@ -132,7 +162,7 @@ namespace WatchBox
             string account = ExtractJsonString(json, "account");
             RunOnStaThread(() =>
             {
-                var scanner = GetScanner();
+                var scanner = new MailScanner();
                 var folders = scanner.GetFolders(account);
                 var sb = new StringBuilder();
                 sb.Append("{\"folders\":[");
@@ -272,6 +302,19 @@ namespace WatchBox
         }
 
         // --- Helpers ---
+
+        static void DeleteManifest(string outputRoot)
+        {
+            if (string.IsNullOrEmpty(outputRoot)) return;
+            try
+            {
+                string hidden = Path.Combine(outputRoot, ".manifest.csv");
+                string visible = Path.Combine(outputRoot, "manifest.csv");
+                if (File.Exists(hidden)) File.Delete(hidden);
+                if (File.Exists(visible)) File.Delete(visible);
+            }
+            catch { }
+        }
 
         static void RunOnStaThread(Action work)
         {

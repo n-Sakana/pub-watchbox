@@ -63,6 +63,11 @@ namespace WatchBox
             if (type != "mail")
                 RewriteFolderManifest(outputRoot, config, type, hideManifest);
 
+            // Record successful scan timestamp for incremental date filter
+            if (type == "mail" && !scanner.CancelRequested)
+                Config.PSet(profileIndex, "last_scan",
+                    DateTime.UtcNow.ToString("yyyy-MM-dd"));
+
             return new RunResult { Added = added, Modified = modified, Removed = removedIds.Count };
         }
 
@@ -121,7 +126,7 @@ namespace WatchBox
             var config = new Dictionary<string, string>();
             string[] keys = { "output_root", "account", "outlook_folder", "since",
                 "filter_mode", "filters", "flat_output", "source_folder",
-                "recurse", "type", "short_dirname", "auto_unzip" };
+                "recurse", "type", "short_dirname", "auto_unzip", "last_scan" };
             foreach (var k in keys)
                 config[k] = Config.PGet(profileIndex, k);
             return config;

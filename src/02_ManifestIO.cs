@@ -208,25 +208,6 @@ namespace WatchBox
             return results;
         }
 
-        // --- Get latest received_at from mail manifest (for incremental scan) ---
-
-        public static DateTime GetLatestMailDate(string outputRoot)
-        {
-            DateTime latest = DateTime.MinValue;
-            string path = ResolvePath(outputRoot);
-            if (!File.Exists(path)) return latest;
-            foreach (var line in File.ReadAllLines(path, Encoding.UTF8))
-            {
-                if (string.IsNullOrEmpty(line)) continue;
-                var cols = CsvSplit(line);
-                if (cols.Length < 5 || cols[0] == "entry_id") continue;
-                DateTime dt;
-                if (DateTime.TryParse(cols[4], out dt) && dt > latest)
-                    latest = dt;
-            }
-            return latest;
-        }
-
         // --- Detect manifest type from header ---
 
         public static string DetectType(string outputRoot)
