@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.IO;
 
 namespace WatchBox
@@ -57,8 +58,9 @@ namespace WatchBox
                 ManifestIO.RemoveRows(outputRoot, new HashSet<string>(removedIds));
             }
 
-            // Rewrite folder manifest when items were modified (updated rows need replacing)
-            if (modified > 0 && type != "mail")
+            // Rewrite folder manifest every run to ensure filter/flat_output changes
+            // are reflected even when no files were modified
+            if (type != "mail")
                 RewriteFolderManifest(outputRoot, config, type, hideManifest);
 
             return new RunResult { Added = added, Modified = modified, Removed = removedIds.Count };
@@ -157,7 +159,13 @@ namespace WatchBox
             if (!string.IsNullOrEmpty(since))
             {
                 DateTime dt;
-                if (DateTime.TryParse(since, out dt)) sinceDate = dt;
+                string[] fmts = { "yyyy-MM-dd", "yyyy/MM/dd", "yyyy/M/d", "M/d/yyyy" };
+                if (DateTime.TryParseExact(since, fmts, CultureInfo.InvariantCulture,
+                    DateTimeStyles.None, out dt))
+                    sinceDate = dt;
+                else
+                    System.Diagnostics.Debug.WriteLine(
+                        "RewriteFolderManifest: failed to parse since date: " + since);
             }
             string filterMode = config.ContainsKey("filter_mode") && config["filter_mode"] == "and"
                 ? "and" : "or";

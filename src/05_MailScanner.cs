@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.IO;
 using System.Text;
 
@@ -189,8 +190,13 @@ namespace WatchBox
 
             string filter = null;
             DateTime dt;
-            if (!string.IsNullOrEmpty(sinceDate) && DateTime.TryParse(sinceDate, out dt))
+            string[] dateFmts = { "yyyy-MM-dd", "yyyy/MM/dd", "yyyy/M/d", "M/d/yyyy" };
+            if (!string.IsNullOrEmpty(sinceDate) && DateTime.TryParseExact(sinceDate, dateFmts,
+                CultureInfo.InvariantCulture, DateTimeStyles.None, out dt))
                 filter = string.Format("[ReceivedTime]>='{0:yyyy/MM/dd}'", dt);
+            else if (!string.IsNullOrEmpty(sinceDate))
+                System.Diagnostics.Debug.WriteLine(
+                    "MailScanner: failed to parse since date: " + sinceDate);
             else if (_exported.Count > 0)
             {
                 // Already have data: use latest date from manifest to narrow scan
@@ -206,6 +212,16 @@ namespace WatchBox
                     DateTime.Now.AddDays(-30));
             }
 
+            // Guard: if account is empty, skip scanning entirely to prevent
+            // exporting all accounts into a single profile's output_root
+            if (string.IsNullOrEmpty(filterAccount))
+            {
+                System.Diagnostics.Debug.WriteLine(
+                    "MailScanner: account filter is empty, skipping scan to prevent" +
+                    " exporting all mailboxes. Please select an account in settings.");
+                return results;
+            }
+
             foreach (dynamic store in _olNs.Stores)
             {
                 if (CancelRequested) break;
@@ -213,8 +229,7 @@ namespace WatchBox
                 {
                     string smtp = GetStoreSmtp(store);
                     if (string.IsNullOrEmpty(smtp)) continue;
-                    if (!string.IsNullOrEmpty(filterAccount) &&
-                        !string.Equals(smtp, filterAccount, StringComparison.OrdinalIgnoreCase)) continue;
+                    if (!string.Equals(smtp, filterAccount, StringComparison.OrdinalIgnoreCase)) continue;
 
                     if (!string.IsNullOrEmpty(filterFolder))
                     {

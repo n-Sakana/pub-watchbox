@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.IO;
 using System.IO.Compression;
 
@@ -23,7 +24,13 @@ namespace WatchBox
             if (!string.IsNullOrEmpty(since))
             {
                 DateTime dt;
-                if (DateTime.TryParse(since, out dt)) _sinceDate = dt;
+                string[] fmts = { "yyyy-MM-dd", "yyyy/MM/dd", "yyyy/M/d", "M/d/yyyy" };
+                if (DateTime.TryParseExact(since, fmts, CultureInfo.InvariantCulture,
+                    DateTimeStyles.None, out dt))
+                    _sinceDate = dt;
+                else
+                    System.Diagnostics.Debug.WriteLine(
+                        "FolderScanner: failed to parse since date: " + since);
             }
 
             _filterMode = "or";
@@ -249,6 +256,7 @@ namespace WatchBox
         public override List<string> DetectRemoved(
             Dictionary<string, string> config, HashSet<string> knownIds)
         {
+            ParseFilters(config);
             string sourceFolder = config.ContainsKey("source_folder") ? config["source_folder"] : "";
             bool hasSource = !string.IsNullOrEmpty(sourceFolder) && Directory.Exists(sourceFolder);
             return hasSource ? DetectRemovedFromSource(config, sourceFolder)
@@ -264,7 +272,18 @@ namespace WatchBox
             {
                 string sourcePath = Path.Combine(sourceFolder, row.RelativePath.Replace('/', '\\'));
                 if (!File.Exists(sourcePath))
+                {
                     removed.Add(row.ItemId);
+                    continue;
+                }
+                // Also remove entries that no longer pass filters
+                try
+                {
+                    var fi = new FileInfo(sourcePath);
+                    if (!PassesFilter(fi))
+                        removed.Add(row.ItemId);
+                }
+                catch { }
             }
             return removed;
         }
@@ -277,7 +296,18 @@ namespace WatchBox
             foreach (var row in existing.Values)
             {
                 if (!File.Exists(row.FilePath))
+                {
                     removed.Add(row.ItemId);
+                    continue;
+                }
+                // Also remove entries that no longer pass filters
+                try
+                {
+                    var fi = new FileInfo(row.FilePath);
+                    if (!PassesFilter(fi))
+                        removed.Add(row.ItemId);
+                }
+                catch { }
             }
             return removed;
         }
