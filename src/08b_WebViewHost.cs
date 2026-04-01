@@ -141,13 +141,23 @@ namespace WatchBox
             catch { }
         }
 
+        protected override void OnClosing(System.ComponentModel.CancelEventArgs e)
+        {
+            if (_webView != null)
+            {
+                _webView.Dispose();
+                _webView = null;
+            }
+            base.OnClosing(e);
+        }
+
         // Override in subclasses to handle specific actions
         protected virtual void HandleMessage(string action, string json) { }
 
         // Send a message to JavaScript
         protected void SendMessage(string action, string data)
         {
-            if (!_isReady || _webView.CoreWebView2 == null) return;
+            if (!_isReady || _webView == null || _webView.CoreWebView2 == null) return;
             string msg = string.Format(
                 "{{\"action\":\"{0}\",\"data\":{1}}}",
                 JsonEsc(action), data ?? "null");
