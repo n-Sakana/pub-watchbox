@@ -4,6 +4,7 @@ const Settings = {
     currentIdx: -1,
     filters: [],
     selectedFilter: -1,
+    _ready: false,
 
     // --- Initialization ---
 
@@ -68,8 +69,8 @@ const Settings = {
         document.getElementById('fOutputRoot').value = p.output_root || '';
         const fFlat = document.getElementById('fFlat');
         const fShort = document.getElementById('fShortDirname');
-        if (p.flat_output === '1') fFlat.setAttribute('checked', ''); else fFlat.removeAttribute('checked');
-        if (p.short_dirname === '1') fShort.setAttribute('checked', ''); else fShort.removeAttribute('checked');
+        fFlat.checked = p.flat_output === '1';
+        fShort.checked = p.short_dirname === '1';
 
         // Mail source
         this.selectOption('fAccount', p.account || '');
@@ -79,8 +80,8 @@ const Settings = {
         document.getElementById('fSourceFolder').value = p.source_folder || '';
         const fRec = document.getElementById('fRecurse');
         const fUnzip = document.getElementById('fAutoUnzip');
-        if (p.recurse !== '0') fRec.setAttribute('checked', ''); else fRec.removeAttribute('checked');
-        if (p.auto_unzip === '1') fUnzip.setAttribute('checked', ''); else fUnzip.removeAttribute('checked');
+        fRec.checked = p.recurse !== '0';
+        fUnzip.checked = p.auto_unzip === '1';
 
         // Filter
         document.getElementById('fSince').value = p.since || '';
@@ -92,38 +93,38 @@ const Settings = {
         this.rebuildFilterList();
 
         // Monitoring
-        const setChk = (id, val) => { const el = document.getElementById(id); if (val) el.setAttribute('checked', ''); else el.removeAttribute('checked'); };
-        setChk('fNotify', p.notify !== '0');
-        setChk('fLog', p.log_enabled !== '0');
-        setChk('fManifestHidden', p.manifest_hidden !== '0');
+        document.getElementById('fNotify').checked = p.notify !== '0';
+        document.getElementById('fLog').checked = p.log_enabled !== '0';
+        document.getElementById('fManifestHidden').checked = p.manifest_hidden !== '0';
 
         // Type toggle
         this.onTypeChange();
     },
 
     saveToModel() {
+        if (!this._ready) return;
         if (this.currentIdx < 0 || this.currentIdx >= this.profiles.length) return;
         const p = this.profiles[this.currentIdx];
 
         p.name = document.getElementById('fName').value;
         p.type = document.getElementById('fType').value;
         p.output_root = document.getElementById('fOutputRoot').value;
-        p.flat_output = document.getElementById('fFlat').hasAttribute('checked') ? '1' : '0';
-        p.short_dirname = document.getElementById('fShortDirname').hasAttribute('checked') ? '1' : '0';
+        p.flat_output = document.getElementById('fFlat').checked ? '1' : '0';
+        p.short_dirname = document.getElementById('fShortDirname').checked ? '1' : '0';
 
         p.account = document.getElementById('fAccount').value;
         p.outlook_folder = document.getElementById('fOutlookFolder').value;
 
         p.source_folder = document.getElementById('fSourceFolder').value;
-        p.recurse = document.getElementById('fRecurse').hasAttribute('checked') ? '1' : '0';
-        p.auto_unzip = document.getElementById('fAutoUnzip').hasAttribute('checked') ? '1' : '0';
+        p.recurse = document.getElementById('fRecurse').checked ? '1' : '0';
+        p.auto_unzip = document.getElementById('fAutoUnzip').checked ? '1' : '0';
 
         p.since = document.getElementById('fSince').value;
         const rg = document.getElementById('filterModeGroup');
         p.filter_mode = rg ? (rg.value || 'or') : 'or';
         p.filters = this.filters.join(';');
 
-        const chk = (id) => document.getElementById(id).hasAttribute('checked') ? '1' : '0';
+        const chk = (id) => document.getElementById(id).checked ? '1' : '0';
         p.notify = chk('fNotify');
         p.log_enabled = chk('fLog');
         p.manifest_hidden = chk('fManifestHidden');
@@ -149,7 +150,8 @@ const Settings = {
 
     onAccountsLoaded(data) {
         const sel = document.getElementById('fAccount');
-        const current = sel.value;
+        // Always prefer the profile model value over DOM value
+        const profileVal = (this.profiles[this.currentIdx] || {}).account || '';
         sel.innerHTML = '<fluent-option value="">(All)</fluent-option>';
         (data.accounts || []).forEach(a => {
             const opt = document.createElement('fluent-option');
@@ -157,17 +159,19 @@ const Settings = {
             opt.textContent = a;
             sel.appendChild(opt);
         });
-        this.selectOption('fAccount', current ||
-            (this.profiles[this.currentIdx] || {}).account || '');
+        this.selectOption('fAccount', profileVal);
 
-        // Load folders for current account
-        Bridge.send('getFolders', { account: sel.value });
+        // Load folders for current account (use model value, not DOM which may lag)
+        Bridge.send('getFolders', { account: profileVal || sel.value });
+
+        // Mark ready after accounts are loaded (initial async load complete)
+        if (!this._ready) this._ready = true;
     },
 
     onFoldersLoaded(data) {
         const sel = document.getElementById('fOutlookFolder');
-        const current = sel.value ||
-            (this.profiles[this.currentIdx] || {}).outlook_folder || '';
+        // Always prefer the profile model value over DOM value
+        const profileVal = (this.profiles[this.currentIdx] || {}).outlook_folder || '';
         sel.innerHTML = '<fluent-option value="">(All)</fluent-option>';
         (data.folders || []).forEach(f => {
             const opt = document.createElement('fluent-option');
@@ -175,7 +179,7 @@ const Settings = {
             opt.textContent = f.display;
             sel.appendChild(opt);
         });
-        this.selectOption('fOutlookFolder', current);
+        this.selectOption('fOutlookFolder', profileVal);
     },
 
     onAccountChange() {

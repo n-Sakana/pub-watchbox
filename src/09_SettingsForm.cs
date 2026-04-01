@@ -181,7 +181,7 @@ namespace WatchBox
                     {
                         string line = lines[row].Trim();
                         if (string.IsNullOrEmpty(line)) continue;
-                        var cols = line.Split(',');
+                        var cols = CsvSplit(line);
                         if (cols[0].Trim().ToLower() == "name") continue;
                         if (cols.Length < 1) continue;
 
@@ -242,22 +242,22 @@ namespace WatchBox
                     foreach (var pJson in profiles)
                     {
                         lines.Add(string.Join(",", new[] {
-                            ExtractJsonString(pJson, "name"),
-                            ExtractJsonString(pJson, "type"),
-                            ExtractJsonString(pJson, "output_root"),
-                            ExtractJsonString(pJson, "account"),
-                            ExtractJsonString(pJson, "outlook_folder"),
-                            ExtractJsonString(pJson, "source_folder"),
-                            ExtractJsonString(pJson, "manifest_hidden"),
-                            ExtractJsonString(pJson, "filters"),
-                            ExtractJsonString(pJson, "filter_mode"),
-                            ExtractJsonString(pJson, "flat_output"),
-                            ExtractJsonString(pJson, "recurse"),
-                            ExtractJsonString(pJson, "since"),
-                            ExtractJsonString(pJson, "short_dirname"),
-                            ExtractJsonString(pJson, "auto_unzip"),
-                            ExtractJsonString(pJson, "notify"),
-                            ExtractJsonString(pJson, "log_enabled")
+                            CsvQuote(ExtractJsonString(pJson, "name")),
+                            CsvQuote(ExtractJsonString(pJson, "type")),
+                            CsvQuote(ExtractJsonString(pJson, "output_root")),
+                            CsvQuote(ExtractJsonString(pJson, "account")),
+                            CsvQuote(ExtractJsonString(pJson, "outlook_folder")),
+                            CsvQuote(ExtractJsonString(pJson, "source_folder")),
+                            CsvQuote(ExtractJsonString(pJson, "manifest_hidden")),
+                            CsvQuote(ExtractJsonString(pJson, "filters")),
+                            CsvQuote(ExtractJsonString(pJson, "filter_mode")),
+                            CsvQuote(ExtractJsonString(pJson, "flat_output")),
+                            CsvQuote(ExtractJsonString(pJson, "recurse")),
+                            CsvQuote(ExtractJsonString(pJson, "since")),
+                            CsvQuote(ExtractJsonString(pJson, "short_dirname")),
+                            CsvQuote(ExtractJsonString(pJson, "auto_unzip")),
+                            CsvQuote(ExtractJsonString(pJson, "notify")),
+                            CsvQuote(ExtractJsonString(pJson, "log_enabled"))
                         }));
                     }
                     File.WriteAllLines(dlg.FileName, lines.ToArray(), Encoding.UTF8);
@@ -274,7 +274,15 @@ namespace WatchBox
 
         static void RunOnStaThread(Action work)
         {
-            var thread = new Thread(() => { try { work(); } catch { } });
+            var thread = new Thread(() =>
+            {
+                try { work(); }
+                catch (Exception ex)
+                {
+                    System.Diagnostics.Debug.WriteLine(
+                        "RunOnStaThread error: " + ex.ToString());
+                }
+            });
             thread.SetApartmentState(ApartmentState.STA);
             thread.IsBackground = true;
             thread.Start();
@@ -316,6 +324,52 @@ namespace WatchBox
             if (idx >= cols.Length) return def;
             string v = cols[idx].Trim();
             return v.Length > 0 ? v : def;
+        }
+
+        // Quote a CSV field if it contains comma, quote, or newline
+        static string CsvQuote(string value)
+        {
+            if (value == null) return "";
+            if (value.IndexOfAny(new[] { ',', '"', '\r', '\n' }) >= 0)
+                return "\"" + value.Replace("\"", "\"\"") + "\"";
+            return value;
+        }
+
+        // Split a CSV line respecting quoted fields
+        static string[] CsvSplit(string line)
+        {
+            var fields = new List<string>();
+            int i = 0;
+            while (i <= line.Length)
+            {
+                if (i == line.Length) { fields.Add(""); break; }
+                if (line[i] == '"')
+                {
+                    // Quoted field
+                    i++;
+                    var sb = new StringBuilder();
+                    while (i < line.Length)
+                    {
+                        if (line[i] == '"')
+                        {
+                            if (i + 1 < line.Length && line[i + 1] == '"')
+                                { sb.Append('"'); i += 2; }
+                            else { i++; break; }
+                        }
+                        else { sb.Append(line[i]); i++; }
+                    }
+                    fields.Add(sb.ToString());
+                    if (i < line.Length && line[i] == ',') i++;
+                }
+                else
+                {
+                    int sep = line.IndexOf(',', i);
+                    if (sep < 0) { fields.Add(line.Substring(i)); break; }
+                    fields.Add(line.Substring(i, sep - i));
+                    i = sep + 1;
+                }
+            }
+            return fields.ToArray();
         }
     }
 }

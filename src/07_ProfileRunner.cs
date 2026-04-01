@@ -128,6 +128,9 @@ namespace WatchBox
         static string GetRelativePath(string outputRoot, ScanResult item,
             Dictionary<string, string> config)
         {
+            bool flatOutput = config.ContainsKey("flat_output") && config["flat_output"] == "1";
+            if (flatOutput) return item.Name;
+
             string source = config.ContainsKey("source_folder") ? config["source_folder"] : "";
             if (!string.IsNullOrEmpty(source) && item.SourcePath.StartsWith(source))
             {
@@ -141,10 +144,28 @@ namespace WatchBox
         }
 
         // Rewrite folder manifest: re-scan and write fresh
+        // Applies the same filters and flat_output logic as FolderScanner.Scan()
         static void RewriteFolderManifest(string outputRoot, Dictionary<string, string> config,
             string type, bool hide = true)
         {
             bool recurse = !config.ContainsKey("recurse") || config["recurse"] != "0";
+            bool flatOutput = config.ContainsKey("flat_output") && config["flat_output"] == "1";
+
+            // Parse filter settings (same logic as FolderScanner.ParseFilters)
+            DateTime sinceDate = DateTime.MinValue;
+            string since = config.ContainsKey("since") ? config["since"] : "";
+            if (!string.IsNullOrEmpty(since))
+            {
+                DateTime dt;
+                if (DateTime.TryParse(since, out dt)) sinceDate = dt;
+            }
+            string filterMode = config.ContainsKey("filter_mode") && config["filter_mode"] == "and"
+                ? "and" : "or";
+            var filterWords = new List<string>();
+            string keywords = config.ContainsKey("filters") ? config["filters"] : "";
+            if (!string.IsNullOrEmpty(keywords))
+                foreach (var kw in keywords.Split(';'))
+                    if (kw.Trim().Length > 0) filterWords.Add(kw.Trim().ToLower());
 
             string source = config.ContainsKey("source_folder") ? config["source_folder"] : "";
             string scanRoot = !string.IsNullOrEmpty(source) ? source : outputRoot;
@@ -162,8 +183,35 @@ namespace WatchBox
                 if (fn == ".manifest.csv" || fn == "manifest.csv" || fn == "log.csv") continue;
                 try
                 {
-                    string relativePath = filePath.Substring(scanRoot.Length).TrimStart('\\', '/');
                     var fi = new FileInfo(filePath);
+
+                    // Apply date filter
+                    if (sinceDate > DateTime.MinValue && fi.LastWriteTime < sinceDate) continue;
+
+                    // Apply keyword filter on filename
+                    if (filterWords.Count > 0)
+                    {
+                        string nameLower = fi.Name.ToLower();
+                        if (filterMode == "and")
+                        {
+                            bool allMatch = true;
+                            foreach (var kw in filterWords)
+                                if (!nameLower.Contains(kw)) { allMatch = false; break; }
+                            if (!allMatch) continue;
+                        }
+                        else
+                        {
+                            bool anyMatch = false;
+                            foreach (var kw in filterWords)
+                                if (nameLower.Contains(kw)) { anyMatch = true; break; }
+                            if (!anyMatch) continue;
+                        }
+                    }
+
+                    // Compute relative path respecting flat_output
+                    string relativePath = flatOutput
+                        ? fi.Name
+                        : filePath.Substring(scanRoot.Length).TrimStart('\\', '/');
                     rows.Add(new FolderManifestRow {
                         ItemId = ManifestIO.ComputeItemId(relativePath),
                         FileName = fi.Name,
