@@ -87,7 +87,7 @@ const Settings = {
         fUnzip.checked = p.auto_unzip === '1';
 
         // Filter
-        document.getElementById('fSince').value = p.since || '';
+        document.getElementById('fSince').value = this.normalizeDate(p.since || '');
         const mode = p.filter_mode === 'and' ? 'and' : 'or';
         const radioGroup = document.getElementById('filterModeGroup');
         if (radioGroup) radioGroup.value = mode;
@@ -334,6 +334,32 @@ const Settings = {
     },
 
     // --- Helpers ---
+
+    // Normalize date to yyyy-MM-dd for <input type="date">
+    normalizeDate(value) {
+        if (!value) return '';
+        // Already ISO format
+        if (/^\d{4}-\d{2}-\d{2}$/.test(value)) return value;
+        // Try parsing with Date (handles yyyy/MM/dd, M/d/yyyy, etc.)
+        const d = new Date(value);
+        if (!isNaN(d.getTime())) {
+            const y = d.getFullYear();
+            const m = String(d.getMonth() + 1).padStart(2, '0');
+            const day = String(d.getDate()).padStart(2, '0');
+            return y + '-' + m + '-' + day;
+        }
+        // Try manual parse for yyyy/M/d pattern
+        const parts = value.split('/');
+        if (parts.length === 3) {
+            let y, m, d2;
+            if (parts[0].length === 4) { y = parts[0]; m = parts[1]; d2 = parts[2]; }
+            else { m = parts[0]; d2 = parts[1]; y = parts[2]; }
+            y = parseInt(y); m = parseInt(m); d2 = parseInt(d2);
+            if (y > 0 && m > 0 && m <= 12 && d2 > 0 && d2 <= 31)
+                return y + '-' + String(m).padStart(2, '0') + '-' + String(d2).padStart(2, '0');
+        }
+        return value;
+    },
 
     selectOption(id, value) {
         const sel = document.getElementById(id);

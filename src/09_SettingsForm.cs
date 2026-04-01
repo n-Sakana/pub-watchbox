@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.IO;
 using System.Text;
 using System.Threading;
@@ -198,7 +199,7 @@ namespace WatchBox
                         sb.AppendFormat(",\"filter_mode\":\"{0}\"", JsonEsc(ColVal(cols, 8, "or")));
                         sb.AppendFormat(",\"flat_output\":\"{0}\"", JsonEsc(ColVal(cols, 9, "0")));
                         sb.AppendFormat(",\"recurse\":\"{0}\"", JsonEsc(ColVal(cols, 10, "1")));
-                        sb.AppendFormat(",\"since\":\"{0}\"", JsonEsc(ColVal(cols, 11, "")));
+                        sb.AppendFormat(",\"since\":\"{0}\"", JsonEsc(NormalizeDate(ColVal(cols, 11, ""))));
                         sb.AppendFormat(",\"short_dirname\":\"{0}\"", JsonEsc(ColVal(cols, 12, "0")));
                         sb.AppendFormat(",\"auto_unzip\":\"{0}\"", JsonEsc(ColVal(cols, 13, "0")));
                         sb.AppendFormat(",\"notify\":\"{0}\"", JsonEsc(ColVal(cols, 14, "1")));
@@ -332,6 +333,23 @@ namespace WatchBox
             if (value == null) return "";
             if (value.IndexOfAny(new[] { ',', '"', '\r', '\n' }) >= 0)
                 return "\"" + value.Replace("\"", "\"\"") + "\"";
+            return value;
+        }
+
+        // Normalize a date string to yyyy-MM-dd (ISO 8601) for <input type="date">
+        static string NormalizeDate(string value)
+        {
+            if (string.IsNullOrEmpty(value)) return "";
+            string[] fmts = new string[] {
+                "yyyy-MM-dd", "yyyy/MM/dd", "yyyy/M/d",
+                "M/d/yyyy", "MM/dd/yyyy", "d/M/yyyy", "dd/MM/yyyy"
+            };
+            DateTime dt;
+            if (DateTime.TryParseExact(value, fmts,
+                CultureInfo.InvariantCulture, DateTimeStyles.None, out dt))
+                return dt.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+            System.Diagnostics.Debug.WriteLine(
+                "NormalizeDate: failed to parse '" + value + "'");
             return value;
         }
 
