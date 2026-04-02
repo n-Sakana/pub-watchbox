@@ -309,12 +309,106 @@ namespace WatchBox
             _btnWatch.IsEnabled = false;
             _status.Text = "Initial sync...";
 
-            // Initial full sync, then start event watch
+            // Initial full sync (same bulk strategy as Pull), then start event watch
             RunOnStaThread(() =>
             {
                 int total = 0;
-                for (int i = 0; i < Config.ProfileCount; i++)
-                    total += ProfileRunner.Run(i).Added;
+                int profileCount = Config.ProfileCount;
+                var mailScanner = new MailScanner();
+
+                var scanKeys = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+                var mailProfiles = new List<int>();
+                var folderProfiles = new List<int>();
+
+                for (int i = 0; i < profileCount; i++)
+                {
+                    if (string.IsNullOrEmpty(Config.PGet(i, "output_root"))) continue;
+                    if (Config.PGet(i, "type", "mail") == "folder")
+                    { folderProfiles.Add(i); continue; }
+                    mailProfiles.Add(i);
+
+                    string key = Config.PGet(i, "account").ToLower() + "\t" +
+                        Config.PGet(i, "outlook_folder");
+                    if (!scanKeys.ContainsKey(key)) scanKeys[key] = null;
+                }
+
+                foreach (var key in new List<string>(scanKeys.Keys))
+                {
+                    DateTime earliest = DateTime.MaxValue;
+                    bool needAll = false;
+                    foreach (int i in mailProfiles)
+                    {
+                        string k = Config.PGet(i, "account").ToLower() + "\t" +
+                            Config.PGet(i, "outlook_folder");
+                        if (!string.Equals(k, key, StringComparison.OrdinalIgnoreCase)) continue;
+
+                        DateTime dt;
+                        string since = Config.PGet(i, "since");
+                        string lastScan = Config.PGet(i, "last_scan");
+                        string[] fmts = { "yyyy-MM-dd", "yyyy/MM/dd", "yyyy/M/d", "M/d/yyyy" };
+                        if (!string.IsNullOrEmpty(since) && DateTime.TryParseExact(since, fmts,
+                            CultureInfo.InvariantCulture, DateTimeStyles.None, out dt))
+                        { if (dt < earliest) earliest = dt; }
+                        else if (!string.IsNullOrEmpty(lastScan) && DateTime.TryParseExact(
+                            lastScan, "yyyy-MM-dd", CultureInfo.InvariantCulture,
+                            DateTimeStyles.None, out dt) &&
+                            ManifestIO.LoadIds(Config.PGet(i, "output_root")).Count > 0)
+                        { dt = dt.AddDays(-1); if (dt < earliest) earliest = dt; }
+                        else needAll = true;
+                    }
+                    scanKeys[key] = needAll || earliest == DateTime.MaxValue ? null
+                        : string.Format("[ReceivedTime]>='{0:yyyy/MM/dd} 00:00'", earliest);
+                }
+
+                // Phase 1: Scan each unique folder once, cache items
+                var caches = new Dictionary<string, List<CachedMailItem>>(
+                    StringComparer.OrdinalIgnoreCase);
+                int scanIdx = 0;
+                foreach (var kv in scanKeys)
+                {
+                    scanIdx++;
+                    var parts = kv.Key.Split('\t');
+                    string label = parts.Length > 1 && parts[1].Length > 0
+                        ? parts[1].Substring(parts[1].LastIndexOf('\\') + 1) : "All";
+                    Dispatcher.BeginInvoke(new Action(() =>
+                        _status.Text = string.Format("Initial sync: scanning {0} ({1}/{2})...",
+                            label, scanIdx, scanKeys.Count)));
+
+                    var cfg = new Dictionary<string, string>();
+                    cfg["account"] = parts[0];
+                    cfg["outlook_folder"] = parts.Length > 1 ? parts[1] : "";
+                    caches[kv.Key] = mailScanner.ScanBulk(cfg, kv.Value);
+                }
+
+                // Phase 2: Per-profile keyword matching and export from cache
+                for (int p = 0; p < mailProfiles.Count; p++)
+                {
+                    int i = mailProfiles[p];
+                    string pname = Config.PGet(i, "name", "Profile " + i);
+                    int idx = i;
+                    Dispatcher.BeginInvoke(new Action(() =>
+                        _status.Text = string.Format("Initial sync: ({0}/{1}) [{2}]...",
+                            idx + 1, profileCount, pname)));
+
+                    string key = Config.PGet(i, "account").ToLower() + "\t" +
+                        Config.PGet(i, "outlook_folder");
+                    List<CachedMailItem> cache;
+                    if (!caches.TryGetValue(key, out cache)) continue;
+
+                    total += ProfileRunner.RunFromCache(i, mailScanner, cache, null).Added;
+                }
+
+                // Phase 3: Folder-type profiles
+                foreach (int i in folderProfiles)
+                {
+                    string pname = Config.PGet(i, "name", "Profile " + i);
+                    int idx = i;
+                    Dispatcher.BeginInvoke(new Action(() =>
+                        _status.Text = string.Format("Initial sync: ({0}/{1}) {2}...",
+                            idx + 1, profileCount, pname)));
+                    total += ProfileRunner.Run(i, new FolderScanner(), null).Added;
+                }
+
                 return total;
             },
             total =>
@@ -400,8 +494,8 @@ namespace WatchBox
                     Dispatcher.BeginInvoke(new Action(() =>
                     {
                         _status.Text = "Error: " + ex.Message;
-                        _pulling = false;
-                        SetPullButton(false);
+                        if (_pulling) { _pulling = false; SetPullButton(false); }
+                        if (_watching) StopWatching();
                     }));
                 }
             });
