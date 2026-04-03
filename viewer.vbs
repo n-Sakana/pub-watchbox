@@ -1,0 +1,1 @@
+CreateObject("WScript.Shell").Run "powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File """ & Replace(WScript.ScriptFullName, "viewer.vbs", "watchbox.ps1") & """ --viewer", 0, False

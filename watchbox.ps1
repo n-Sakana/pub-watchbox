@@ -41,4 +41,5 @@ if (Test-Path "$libDir\Microsoft.Web.WebView2.Wpf.dll") {
 }
 
 Add-Type -TypeDefinition $source -ReferencedAssemblies $refs
-[WatchBox.App]::Run($PSScriptRoot)
+$viewerOnly = $args -contains '--viewer'
+[WatchBox.App]::Run($PSScriptRoot, $viewerOnly)

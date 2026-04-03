@@ -263,6 +263,7 @@ namespace WatchBox
                     totalAdded += ProfileRunner.Run(i, fs, progress).Added;
                 }
                 _activeScanner = null;
+                mailScanner.Cleanup();
                 return totalAdded;
             },
             total =>
@@ -409,6 +410,7 @@ namespace WatchBox
                     total += ProfileRunner.Run(i, new FolderScanner(), null).Added;
                 }
 
+                mailScanner.Cleanup();
                 return total;
             },
             total =>
@@ -507,6 +509,8 @@ namespace WatchBox
         protected override void OnClosing(System.ComponentModel.CancelEventArgs e)
         {
             StopWatching();
+            GC.Collect();
+            GC.WaitForPendingFinalizers();
             Config.Save();
             base.OnClosing(e);
         }

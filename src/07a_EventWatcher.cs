@@ -49,6 +49,12 @@ namespace WatchBox
                 try { _olDispatcher.InvokeShutdown(); } catch { }
                 _olDispatcher = null;
             }
+
+            foreach (var items in _watchedItems)
+            {
+                try { System.Runtime.InteropServices.Marshal.ReleaseComObject(items); } catch { }
+            }
+            _watchedItems.Clear();
         }
 
         // --- Folder: FileSystemWatcher ---
@@ -109,12 +115,13 @@ namespace WatchBox
 
         void OutlookEventLoop()
         {
+            dynamic olApp = null;
+            dynamic olNs = null;
             try
             {
-                dynamic olApp;
                 try { olApp = System.Runtime.InteropServices.Marshal.GetActiveObject("Outlook.Application"); }
                 catch { olApp = Activator.CreateInstance(Type.GetTypeFromProgID("Outlook.Application")); }
-                dynamic olNs = olApp.GetNamespace("MAPI");
+                olNs = olApp.GetNamespace("MAPI");
 
                 // Hook ItemAdd on each watched folder's Items collection
                 // This works reliably with dynamic/late-binding unlike NewMailEx
@@ -132,6 +139,11 @@ namespace WatchBox
                 System.Windows.Threading.Dispatcher.Run();
             }
             catch { }
+            finally
+            {
+                try { if (olNs != null) System.Runtime.InteropServices.Marshal.ReleaseComObject(olNs); } catch { }
+                try { if (olApp != null) System.Runtime.InteropServices.Marshal.ReleaseComObject(olApp); } catch { }
+            }
         }
 
         // We need to keep references to Items collections alive (prevent GC)
@@ -167,6 +179,7 @@ namespace WatchBox
 
         void OnItemAdd(dynamic item)
         {
+            try { if ((int)item.Class != 43) return; } catch { return; }
             try
             {
                 string subject = "";

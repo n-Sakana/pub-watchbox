@@ -288,13 +288,22 @@ const Settings = {
 
     // --- Save / Cancel ---
 
+    _closeOnSave: true,
+
     save() {
         this.saveToModel();
+        this._closeOnSave = true;
+        Bridge.send('saveConfig', { profiles: this.profiles });
+    },
+
+    apply() {
+        this.saveToModel();
+        this._closeOnSave = false;
         Bridge.send('saveConfig', { profiles: this.profiles });
     },
 
     onSaveResult(data) {
-        if (data.ok) Bridge.send('close');
+        if (data.ok && this._closeOnSave) Bridge.send('close');
     },
 
     cancel() {
@@ -311,6 +320,9 @@ const Settings = {
         if (data.profiles && data.profiles.length > 0) {
             this.saveToModel();
             data.profiles.forEach(p => this.profiles.push(p));
+            // Remove placeholder profiles with empty output_root (e.g. Default)
+            this.profiles = this.profiles.filter(p => (p.output_root || '').trim() !== '' || this.profiles.length <= 1);
+            this.currentIdx = Math.min(this.currentIdx, this.profiles.length - 1);
             this.rebuildProfileList();
             const sel = document.getElementById('profileSelect');
             sel.selectedIndex = this.profiles.length - 1;

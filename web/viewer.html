@@ -42,7 +42,7 @@
 
         .preview-container { flex: 1; display: flex; flex-direction: column; min-height: 0;
             background: #fff; overflow: hidden; }
-        .preview-container iframe { border: none; flex: 1; width: 100%; }
+        .preview-container iframe { border: none; flex: 1; width: 100%; height: 100%; }
         .preview-container img { max-width: 100%; max-height: 100%; object-fit: contain; margin: auto; }
         .preview-container pre { flex: 1; margin: 0; padding: 12px; overflow: auto;
             font-size: 12px; font-family: Consolas, monospace; white-space: pre-wrap; word-break: break-all; }
@@ -70,7 +70,19 @@
 <div class="top-bar">
     <fluent-select id="profileSelect" size="small" style="width:200px;" onchange="Viewer.onProfileChange()"></fluent-select>
     <input id="searchBox" type="text" placeholder="Search..." oninput="Viewer.onSearch()">
+    <button id="filterToggle" onclick="Viewer.toggleAdvancedFilter()" style="background:none;border:1px solid #d0d0d0;border-radius:4px;padding:2px 8px;font-size:11px;cursor:pointer;" title="Advanced filter">&#x25BC; Filter</button>
     <span id="statusText" style="font-size:11px;color:#999;white-space:nowrap;">0 items</span>
+</div>
+<div id="advancedFilter" style="display:none;padding:4px 10px 6px;border-bottom:1px solid #e5e5e5;background:#fafafa;font-size:12px;">
+    <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+        <label style="color:#808080;">From:</label>
+        <input id="filterDateFrom" type="date" style="font-size:11px;padding:2px 6px;border:1px solid #d0d0d0;border-radius:4px;" onchange="Viewer.onSearch()">
+        <label style="color:#808080;">To:</label>
+        <input id="filterDateTo" type="date" style="font-size:11px;padding:2px 6px;border:1px solid #d0d0d0;border-radius:4px;" onchange="Viewer.onSearch()">
+        <label style="color:#808080;">Sender:</label>
+        <input id="filterSender" type="text" placeholder="sender..." style="width:120px;font-size:11px;padding:2px 6px;border:1px solid #d0d0d0;border-radius:4px;" oninput="Viewer.onSearch()">
+        <label style="display:flex;align-items:center;gap:3px;color:#808080;"><input id="filterHasAttach" type="checkbox" onchange="Viewer.onSearch()"> Has attachment</label>
+    </div>
 </div>
 
 <!-- Main 3-pane area -->

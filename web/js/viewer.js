@@ -9,13 +9,47 @@ const Viewer = {
 
     // --- Initialization ---
 
+    logData: [],
+    viewerLastOpened: '',
+    _advancedFilterOpen: false,
+
     init() {
         Bridge.on('profilesLoaded', (data) => this.onProfilesLoaded(data));
         Bridge.on('manifestLoaded', (data) => this.onManifestLoaded(data));
         Bridge.on('mailBodyLoaded', (data) => this.onMailBodyLoaded(data));
         Bridge.on('attachmentsLoaded', (data) => this.onAttachmentsLoaded(data));
         Bridge.on('filePreview', (data) => this.onFilePreview(data));
+        Bridge.on('logLoaded', (data) => this.onLogLoaded(data));
+        Bridge.on('configValue', (data) => this.onConfigValue(data));
         Bridge.send('getProfiles');
+        Bridge.send('getConfigValue', { key: 'viewer_last_opened' });
+    },
+
+    onLogLoaded(data) {
+        this.logData = data.rows || [];
+        // Refresh grid to show new-item markers
+        if (this.gridApi) this.gridApi.refreshCells({ force: true });
+    },
+
+    onConfigValue(data) {
+        if (data.key === 'viewer_last_opened') {
+            this.viewerLastOpened = data.value || '';
+            // Update timestamp for next open
+            Bridge.send('setConfigValue', { key: 'viewer_last_opened', value: new Date().toISOString() });
+        }
+    },
+
+    isNewItem(receivedAt) {
+        if (!this.viewerLastOpened || !receivedAt) return false;
+        return receivedAt > this.viewerLastOpened;
+    },
+
+    toggleAdvancedFilter() {
+        this._advancedFilterOpen = !this._advancedFilterOpen;
+        document.getElementById('advancedFilter').style.display =
+            this._advancedFilterOpen ? '' : 'none';
+        const btn = document.getElementById('filterToggle');
+        btn.innerHTML = (this._advancedFilterOpen ? '&#x25B2;' : '&#x25BC;') + ' Filter';
     },
 
     // --- Profiles ---
@@ -61,6 +95,7 @@ const Viewer = {
         this.buildGrid();
         this.buildTree(this.outputRoot);
         this.updateStatus();
+        Bridge.send('getLog', { outputRoot: this.outputRoot });
     },
 
     // --- AG Grid (unified for both types) ---
@@ -77,7 +112,14 @@ const Viewer = {
         const isMail = this.currentType === 'mail';
 
         const colDefs = isMail ? [
-            { field: 'date', headerName: 'Date', maxWidth: 110, sort: 'desc' },
+            { field: 'date', headerName: 'Date', maxWidth: 120, sort: 'desc',
+              cellRenderer: (params) => {
+                  const val = params.value || '';
+                  const raw = this.manifestRows[params.data._idx];
+                  const isNew = raw && this.isNewItem(raw.received_at || '');
+                  return isNew ? '<span style="color:#2563eb;" title="New">&#x25CF;</span> ' + this.esc(val) : this.esc(val);
+              }
+            },
             { field: 'sender', headerName: 'From', maxWidth: 200 },
             { field: 'subject', headerName: 'Subject', maxWidth: 400 },
             { field: 'attachCount', headerName: '#', maxWidth: 60 }
@@ -222,20 +264,39 @@ const Viewer = {
 
     hasFilter() {
         const q = (document.getElementById('searchBox').value || '').trim();
-        return q.length > 0 || this.selectedFolder.length > 0;
+        if (q.length > 0 || this.selectedFolder.length > 0) return true;
+        const df = document.getElementById('filterDateFrom');
+        const dt = document.getElementById('filterDateTo');
+        const fs = document.getElementById('filterSender');
+        const fa = document.getElementById('filterHasAttach');
+        if (df && df.value) return true;
+        if (dt && dt.value) return true;
+        if (fs && fs.value.trim()) return true;
+        if (fa && fa.checked) return true;
+        return false;
     },
 
     passesFilter(node) {
         const data = node.data;
         if (this.selectedFolder) {
-            const fp = (data._folderPath || '');
-            if (!fp.toLowerCase().startsWith(this.selectedFolder.toLowerCase())) return false;
+            const fp = (data._folderPath || '').toLowerCase();
+            const sf = this.selectedFolder.toLowerCase();
+            if (fp !== sf && !fp.startsWith(sf + '\\') && !fp.startsWith(sf + '/')) return false;
         }
         const q = (document.getElementById('searchBox').value || '').trim().toLowerCase();
         if (q) {
             const text = Object.values(data).join(' ').toLowerCase();
             if (!text.includes(q)) return false;
         }
+        // Advanced filters
+        const dateFrom = (document.getElementById('filterDateFrom') || {}).value || '';
+        const dateTo = (document.getElementById('filterDateTo') || {}).value || '';
+        const senderFilter = ((document.getElementById('filterSender') || {}).value || '').trim().toLowerCase();
+        const hasAttach = (document.getElementById('filterHasAttach') || {}).checked || false;
+        if (dateFrom && data.date && data.date < dateFrom) return false;
+        if (dateTo && data.date && data.date > dateTo) return false;
+        if (senderFilter && data.sender && !data.sender.toLowerCase().includes(senderFilter)) return false;
+        if (hasAttach && (data.attachCount || 0) === 0) return false;
         return true;
     },
 
@@ -665,15 +726,8 @@ const Viewer = {
     fitColumns(api) {
         if (!api) api = this.gridApi;
         if (!api) return;
-        // Auto-size to content first
-        api.autoSizeAllColumns();
-        // If total columns narrower than grid, stretch to fill
-        const allCols = api.getColumns();
-        if (!allCols) return;
-        let totalW = 0;
-        allCols.forEach(c => totalW += c.getActualWidth());
-        const gridW = document.getElementById('gridContainer').clientWidth;
-        if (totalW < gridW) api.sizeColumnsToFit();
+        // Always fill available width so columns follow resize
+        api.sizeColumnsToFit();
     },
 
     formatSize(bytes) {

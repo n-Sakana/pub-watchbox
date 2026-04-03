@@ -37,7 +37,7 @@ body {
     font-size: 12px; display: flex; align-items: center; gap: 4px;
 }
 .tree-node:hover { background: oklch(var(--bc) / 0.06); }
-.tree-node.selected { background: oklch(var(--p) / 0.1); color: oklch(var(--p)); }
+.tree-node.selected { background: #dbeafe; color: #2563eb; font-weight: 600; }
 .tree-children { padding-left: 16px; }
 
 /* AG Grid */

@@ -9,6 +9,11 @@ namespace WatchBox
     {
         public static void Run(string appDir)
         {
+            Run(appDir, false);
+        }
+
+        public static void Run(string appDir, bool viewerOnly)
+        {
             Config.Load(Path.Combine(appDir, "config.json"));
             Config.Set("app_dir", appDir);
 
@@ -25,7 +30,10 @@ namespace WatchBox
 
             var app = new System.Windows.Application();
             app.ShutdownMode = System.Windows.ShutdownMode.OnMainWindowClose;
-            app.Run(new MonitorWindow());
+            if (viewerOnly)
+                app.Run(new SearchWindow());
+            else
+                app.Run(new MonitorWindow());
         }
     }
 

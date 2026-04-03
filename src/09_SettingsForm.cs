@@ -238,6 +238,18 @@ namespace WatchBox
                         imported.Add(sb.ToString());
                     }
 
+                    // Remove empty profiles (e.g. auto-created "Default" with no output_root)
+                    // that existed before import, to avoid leaving stale placeholders
+                    int beforeCount = Config.ProfileCount;
+                    var emptyIndices = new List<int>();
+                    for (int i = beforeCount - 1; i >= 0; i--)
+                    {
+                        if (string.IsNullOrEmpty(Config.PGet(i, "output_root").Trim()))
+                            emptyIndices.Add(i);
+                    }
+                    foreach (int i in emptyIndices)
+                        Config.RemoveProfile(i);
+
                     var result = new StringBuilder();
                     result.Append("{\"profiles\":[");
                     result.Append(string.Join(",", imported.ToArray()));

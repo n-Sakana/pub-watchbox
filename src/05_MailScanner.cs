@@ -2,7 +2,9 @@ using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
+using System.Runtime.InteropServices;
 using System.Text;
+using System.Threading;
 
 namespace WatchBox
 {
@@ -50,6 +52,14 @@ namespace WatchBox
                 return true;
             }
             catch { return false; }
+        }
+
+        public void Cleanup()
+        {
+            try { if (_olNs != null) Marshal.ReleaseComObject(_olNs); } catch { }
+            try { if (_olApp != null) Marshal.ReleaseComObject(_olApp); } catch { }
+            _olNs = null;
+            _olApp = null;
         }
 
         // --- Accounts / Folders (used by SettingsForm) ---
@@ -235,7 +245,9 @@ namespace WatchBox
                 if (string.IsNullOrEmpty(filterAccount)) return results;
             }
 
-            foreach (dynamic store in _olNs.Stores)
+            var stores = new List<dynamic>();
+            foreach (dynamic s in _olNs.Stores) stores.Add(s);
+            foreach (dynamic store in stores)
             {
                 if (CancelRequested) break;
                 try
@@ -244,16 +256,28 @@ namespace WatchBox
                     if (string.IsNullOrEmpty(smtp)) continue;
                     if (!string.Equals(smtp, filterAccount, StringComparison.OrdinalIgnoreCase)) continue;
 
-                    if (!string.IsNullOrEmpty(filterFolder))
+                    dynamic rootFolder = store.GetRootFolder();
+                    try
                     {
-                        dynamic startFolder = FindFolder(store.GetRootFolder(), filterFolder);
-                        if (startFolder != null)
-                            ScanTree(startFolder, outputRoot, smtp, dateFilter, keywordFilter, results, false);
+                        if (!string.IsNullOrEmpty(filterFolder))
+                        {
+                            dynamic startFolder = FindFolder(rootFolder, filterFolder);
+                            if (startFolder != null)
+                                ScanTree(startFolder, outputRoot, smtp, dateFilter, keywordFilter, results, false);
+                        }
+                        else
+                            ScanTree(rootFolder, outputRoot, smtp, dateFilter, keywordFilter, results, true);
                     }
-                    else
-                        ScanTree(store.GetRootFolder(), outputRoot, smtp, dateFilter, keywordFilter, results, true);
+                    finally
+                    {
+                        try { Marshal.ReleaseComObject(rootFolder); } catch { }
+                    }
                 }
                 catch { }
+                finally
+                {
+                    try { Marshal.ReleaseComObject(store); } catch { }
+                }
             }
             return results;
         }
@@ -331,10 +355,16 @@ namespace WatchBox
                         }
                     }
                     catch { }
+                    finally
+                    {
+                        try { Marshal.ReleaseComObject(item); } catch { }
+                    }
                     if (CancelRequested) break;
                     _itemCount++;
+                    if (_itemCount % 5 == 0) Thread.Sleep(50);
                     try { item = items.GetNext(); } catch { break; }
                 }
+                try { Marshal.ReleaseComObject(items); } catch { }
 
                 if (recurse && !CancelRequested)
                     foreach (dynamic child in folder.Folders)

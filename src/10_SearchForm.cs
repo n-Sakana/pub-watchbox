@@ -23,8 +23,62 @@ namespace WatchBox
                 case "getMailBody": SendMailBody(json); break;
                 case "getAttachments": SendAttachments(json); break;
                 case "getFilePreview": SendFilePreview(json); break;
+                case "getLog": SendLog(json); break;
+                case "getConfigValue": SendConfigValue(json); break;
+                case "setConfigValue": SetConfigValue(json); break;
                 case "openFile": OpenFile(json); break;
             }
+        }
+
+        // --- Log data (log.csv) ---
+
+        void SendLog(string json)
+        {
+            int profileIndex = 0;
+            var m = System.Text.RegularExpressions.Regex.Match(json, "\"profileIndex\"\\s*:\\s*(\\d+)");
+            if (m.Success) profileIndex = int.Parse(m.Groups[1].Value);
+
+            string outputRoot = Config.PGet(profileIndex, "output_root");
+            var sb = new StringBuilder();
+            sb.Append("{\"entries\":[");
+
+            if (!string.IsNullOrEmpty(outputRoot))
+            {
+                string logPath = Path.Combine(outputRoot, "log.csv");
+                if (File.Exists(logPath))
+                {
+                    bool first = true;
+                    foreach (var line in File.ReadAllLines(logPath, Encoding.UTF8))
+                    {
+                        if (string.IsNullOrEmpty(line)) continue;
+                        var cols = ManifestIO.CsvSplit(line);
+                        if (cols.Length < 4 || cols[0] == "timestamp") continue;
+                        if (!first) sb.Append(",");
+                        first = false;
+                        sb.AppendFormat("{{\"ts\":\"{0}\",\"action\":\"{1}\",\"id\":\"{2}\",\"name\":\"{3}\"}}",
+                            JsonEsc(cols[0]), JsonEsc(cols[1]), JsonEsc(cols[2]),
+                            cols.Length > 3 ? JsonEsc(cols[3]) : "");
+                    }
+                }
+            }
+            sb.Append("]}");
+            SendMessage("logLoaded", sb.ToString());
+        }
+
+        void SendConfigValue(string json)
+        {
+            string key = ExtractJsonString(json, "key");
+            string value = Config.Get(key, "");
+            SendMessage("configValue",
+                "{\"key\":\"" + JsonEsc(key) + "\",\"value\":\"" + JsonEsc(value) + "\"}");
+        }
+
+        void SetConfigValue(string json)
+        {
+            string key = ExtractJsonString(json, "key");
+            string value = ExtractJsonString(json, "value");
+            Config.Set(key, value);
+            Config.Save();
         }
 
         // --- Send profile list ---
