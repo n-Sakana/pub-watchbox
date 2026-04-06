@@ -7,7 +7,7 @@ namespace WatchBox
 {
     // Event-driven watcher:
     // - Folder: FileSystemWatcher
-    // - Mail: Outlook NewMailEx event
+    // - Mail: Outlook ItemAdd on profile-configured folders only
     public class EventWatcher
     {
         List<FileSystemWatcher> _fsWatchers = new List<FileSystemWatcher>();
@@ -101,7 +101,8 @@ namespace WatchBox
                 _onEvent(profileIndex, fn);
         }
 
-        // --- Mail: Outlook NewMailEx event on STA thread ---
+        // --- Mail: Outlook ItemAdd on STA thread ---
+        // Only hooks folders configured in mail profiles to minimize COM overhead.
 
         void StartMailWatcher()
         {
@@ -111,6 +112,23 @@ namespace WatchBox
             _olThread.SetApartmentState(ApartmentState.STA);
             _olThread.IsBackground = true;
             _olThread.Start();
+        }
+
+        // Collect target folder paths from mail profiles
+        List<MailWatchTarget> GetMailWatchTargets()
+        {
+            var targets = new List<MailWatchTarget>();
+            var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            for (int i = 0; i < Config.ProfileCount; i++)
+            {
+                if (Config.PGet(i, "type", "mail") != "mail") continue;
+                string account = Config.PGet(i, "account", "");
+                string folder = Config.PGet(i, "outlook_folder", "");
+                string key = account + "|" + folder;
+                if (!seen.Add(key)) continue;
+                targets.Add(new MailWatchTarget { Account = account, FolderPath = folder });
+            }
+            return targets;
         }
 
         void OutlookEventLoop()
@@ -123,15 +141,10 @@ namespace WatchBox
                 catch { olApp = Activator.CreateInstance(Type.GetTypeFromProgID("Outlook.Application")); }
                 olNs = olApp.GetNamespace("MAPI");
 
-                // Hook ItemAdd on each watched folder's Items collection
-                // This works reliably with dynamic/late-binding unlike NewMailEx
-                var watchedItems = new List<dynamic>();
-                foreach (dynamic store in olNs.Stores)
+                var targets = GetMailWatchTargets();
+                foreach (var target in targets)
                 {
-                    try
-                    {
-                        HookFolderTree(store.GetRootFolder(), watchedItems);
-                    }
+                    try { HookTargetFolder(olNs, target); }
                     catch { }
                 }
 
@@ -149,18 +162,125 @@ namespace WatchBox
         // We need to keep references to Items collections alive (prevent GC)
         List<dynamic> _watchedItems = new List<dynamic>();
 
-        void HookFolderTree(dynamic folder, List<dynamic> watchedItems)
+        void HookTargetFolder(dynamic olNs, MailWatchTarget target)
+        {
+            // Find the store that matches the account
+            dynamic rootFolder = null;
+            if (!string.IsNullOrEmpty(target.Account))
+            {
+                foreach (dynamic acct in olNs.Accounts)
+                {
+                    try
+                    {
+                        if (string.Equals((string)acct.SmtpAddress, target.Account,
+                            StringComparison.OrdinalIgnoreCase))
+                        {
+                            rootFolder = acct.DeliveryStore.GetRootFolder();
+                            break;
+                        }
+                    }
+                    catch { }
+                    finally
+                    {
+                        try { System.Runtime.InteropServices.Marshal.ReleaseComObject(acct); } catch { }
+                    }
+                }
+                // Fallback: shared/delegate mailbox via store display name
+                if (rootFolder == null)
+                {
+                    foreach (dynamic store in olNs.Stores)
+                    {
+                        try
+                        {
+                            string name = "";
+                            try { name = (string)store.DisplayName; } catch { }
+                            if (string.Equals(name, target.Account, StringComparison.OrdinalIgnoreCase))
+                            {
+                                rootFolder = store.GetRootFolder();
+                                break;
+                            }
+                        }
+                        catch { }
+                        finally
+                        {
+                            try { System.Runtime.InteropServices.Marshal.ReleaseComObject(store); } catch { }
+                        }
+                    }
+                }
+            }
+            else
+            {
+                // No account specified: use default store
+                try { rootFolder = olNs.DefaultStore.GetRootFolder(); } catch { }
+            }
+
+            if (rootFolder == null) return;
+
+            // Navigate to the specific folder path, or hook root + children if no path
+            if (!string.IsNullOrEmpty(target.FolderPath))
+            {
+                dynamic folder = NavigateToFolder(rootFolder, target.FolderPath);
+                if (folder != null)
+                    HookSingleFolder(folder, true);
+                // rootFolder is an intermediate — release if we navigated deeper
+                if (folder != null && !object.ReferenceEquals(folder, rootFolder))
+                    try { System.Runtime.InteropServices.Marshal.ReleaseComObject(rootFolder); } catch { }
+            }
+            else
+            {
+                // No specific folder: hook root's immediate children only
+                HookSingleFolder(rootFolder, true);
+            }
+        }
+
+        dynamic NavigateToFolder(dynamic rootFolder, string folderPath)
+        {
+            string[] parts = folderPath.Split(new[] { '\\', '/' },
+                StringSplitOptions.RemoveEmptyEntries);
+            dynamic current = rootFolder;
+            foreach (string part in parts)
+            {
+                bool found = false;
+                dynamic prev = current;
+                try
+                {
+                    foreach (dynamic child in current.Folders)
+                    {
+                        try
+                        {
+                            if (string.Equals((string)child.Name, part,
+                                StringComparison.OrdinalIgnoreCase))
+                            {
+                                current = child;
+                                found = true;
+                            }
+                            else
+                            {
+                                // Release folders we don't need
+                                try { System.Runtime.InteropServices.Marshal.ReleaseComObject(child); } catch { }
+                            }
+                        }
+                        catch { }
+                        if (found) break;
+                    }
+                }
+                catch { }
+                if (!found) return null;
+            }
+            return current;
+        }
+
+        void HookSingleFolder(dynamic folder, bool includeChildren)
         {
             try
             {
                 dynamic items = folder.Items;
                 items.ItemAdd += new Action<dynamic>(OnItemAdd);
-                _watchedItems.Add(items); // prevent GC
+                _watchedItems.Add(items);
             }
             catch { }
 
-            // Only hook top-level folders (Inbox, Sent, etc.) to avoid too many hooks
-            // Deep recursion on all folders is expensive
+            if (!includeChildren) return;
             try
             {
                 foreach (dynamic child in folder.Folders)
@@ -170,6 +290,8 @@ namespace WatchBox
                         dynamic childItems = child.Items;
                         childItems.ItemAdd += new Action<dynamic>(OnItemAdd);
                         _watchedItems.Add(childItems);
+                        // Release folder object; Items ref keeps the hook alive
+                        try { System.Runtime.InteropServices.Marshal.ReleaseComObject(child); } catch { }
                     }
                     catch { }
                 }
@@ -179,9 +301,10 @@ namespace WatchBox
 
         void OnItemAdd(dynamic item)
         {
-            try { if ((int)item.Class != 43) return; } catch { return; }
             try
             {
+                try { if ((int)item.Class != 43) return; } catch { return; }
+
                 string subject = "";
                 try { subject = (string)item.Subject; } catch { }
 
@@ -200,6 +323,17 @@ namespace WatchBox
                 }
             }
             catch { }
+            finally
+            {
+                // Release the COM object passed by the event
+                try { System.Runtime.InteropServices.Marshal.ReleaseComObject(item); } catch { }
+            }
+        }
+
+        class MailWatchTarget
+        {
+            public string Account;
+            public string FolderPath;
         }
     }
 }

@@ -22,7 +22,8 @@ namespace WatchBox
             bool hasSource = !string.IsNullOrEmpty(
                 type == "mail" ? config["account"] : config["source_folder"]);
 
-            if (scanner == null)
+            bool ownScanner = scanner == null;
+            if (ownScanner)
             {
                 switch (type)
                 {
@@ -32,9 +33,20 @@ namespace WatchBox
             }
             if (onProgress != null) scanner.ProgressChanged += onProgress;
 
+            List<ScanResult> newItems;
+            List<string> removedIds;
             var knownIds = ManifestIO.LoadIds(outputRoot);
-            var newItems = scanner.Scan(config, knownIds);
-            var removedIds = scanner.DetectRemoved(config, knownIds);
+            try
+            {
+                newItems = scanner.Scan(config, knownIds);
+                removedIds = scanner.DetectRemoved(config, knownIds);
+            }
+            finally
+            {
+                // Release COM objects when we created the scanner
+                if (ownScanner && scanner is MailScanner)
+                    ((MailScanner)scanner).Cleanup();
+            }
 
             // Process new/changed items
             int added = 0, modified = 0;

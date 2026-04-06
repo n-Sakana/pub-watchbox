@@ -39,6 +39,13 @@ body {
 .tree-node:hover { background: oklch(var(--bc) / 0.06); }
 .tree-node.selected { background: #dbeafe; color: #2563eb; font-weight: 600; }
 .tree-children { padding-left: 16px; }
+.tree-chevron {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 16px; height: 16px; font-size: 9px; opacity: 0.4;
+    cursor: pointer; flex-shrink: 0; border-radius: 3px;
+}
+.tree-chevron:hover { opacity: 0.7; background: rgba(0,0,0,0.06); }
+.tree-count { font-size: 10px; opacity: 0.4; margin-left: 2px; flex-shrink: 0; }
 
 /* AG Grid */
 .ag-theme-alpine {

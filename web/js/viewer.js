@@ -59,7 +59,7 @@ const Viewer = {
         const sel = document.getElementById('profileSelect');
         sel.innerHTML = '';
         this.profiles.forEach((p, i) => {
-            const opt = document.createElement('fluent-option');
+            const opt = document.createElement('option');
             opt.value = String(i);
             opt.textContent = p.name + ' (' + p.type + ')';
             sel.appendChild(opt);
@@ -72,7 +72,13 @@ const Viewer = {
 
     onProfileChange() {
         const sel = document.getElementById('profileSelect');
-        const idx = parseInt(sel.value || sel.selectedIndex || 0);
+        const idx = parseInt(sel.value || '0');
+        this.loadProfile(idx);
+    },
+
+    refresh() {
+        const sel = document.getElementById('profileSelect');
+        const idx = parseInt(sel.value || '0');
         this.loadProfile(idx);
     },
 
@@ -124,7 +130,12 @@ const Viewer = {
             { field: 'subject', headerName: 'Subject', maxWidth: 400 },
             { field: 'attachCount', headerName: '#', maxWidth: 60 }
         ] : [
-            { field: 'name', headerName: 'Name', maxWidth: 300 },
+            { field: 'name', headerName: 'Name', maxWidth: 300,
+              cellRenderer: (params) => {
+                  const icon = this.fileIcon(params.value);
+                  return '<span style="margin-right:4px;">' + icon + '</span>' + this.esc(params.value);
+              }
+            },
             { field: 'relativePath', headerName: 'Path', maxWidth: 300 },
             { field: 'size', headerName: 'Size', maxWidth: 100,
               valueFormatter: (p) => this.formatSize(p.value) },
@@ -196,20 +207,27 @@ const Viewer = {
 
     // --- Tree ---
 
+    // Folder path counts (stored for tree filtering)
+    _folderCounts: {},
+
     buildTree(outputRoot) {
         const container = document.getElementById('treeContainer');
         container.innerHTML = '';
 
-        const folderCounts = {};
+        this._folderCounts = {};
         this.manifestRows.forEach(r => {
             let fp = r.folder_path || '';
             if (this.currentType !== 'mail' && outputRoot &&
                 fp.toLowerCase().startsWith(outputRoot.toLowerCase()))
                 fp = fp.substring(outputRoot.length);
             fp = fp.replace(/^[\\/]+/, '') || '.';
-            folderCounts[fp] = (folderCounts[fp] || 0) + 1;
+            this._folderCounts[fp] = (this._folderCounts[fp] || 0) + 1;
         });
 
+        this._buildTreeNodes(container, this._folderCounts);
+    },
+
+    _buildTreeNodes(container, folderCounts) {
         const sorted = Object.keys(folderCounts).sort(
             (a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
 
@@ -234,9 +252,24 @@ const Viewer = {
                 label.className = 'tree-node';
                 const isLeaf = i === parts.length - 1;
                 const count = isLeaf ? folderCounts[fp] : 0;
-                label.innerHTML = '<span class="opacity-40 text-xs">&#x25B6;</span> ' +
-                    this.esc(part) +
-                    (count > 0 ? ' <span class="opacity-40 ml-1">' + count + '</span>' : '');
+
+                const chevron = document.createElement('span');
+                chevron.className = 'tree-chevron';
+                chevron.innerHTML = '&#x25B6;';
+                chevron.onclick = (e) => { e.stopPropagation(); this.toggleTreeNode(node); };
+
+                const text = document.createElement('span');
+                text.style.cssText = 'flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
+                text.textContent = part;
+
+                label.appendChild(chevron);
+                label.appendChild(text);
+                if (count > 0) {
+                    const badge = document.createElement('span');
+                    badge.className = 'tree-count';
+                    badge.textContent = count;
+                    label.appendChild(badge);
+                }
                 label.onclick = () => this.onTreeSelect(cumPath, label);
                 node.appendChild(label);
 
@@ -250,12 +283,69 @@ const Viewer = {
         });
     },
 
+    toggleTreeNode(node) {
+        const children = node.querySelector('.tree-children');
+        const chevron = node.querySelector('.tree-chevron');
+        if (!children) return;
+        const collapsed = children.style.display === 'none';
+        children.style.display = collapsed ? '' : 'none';
+        chevron.innerHTML = collapsed ? '&#x25BC;' : '&#x25B6;';
+    },
+
+    expandAllTree() {
+        document.querySelectorAll('#treeContainer .tree-children').forEach(
+            el => el.style.display = '');
+        document.querySelectorAll('#treeContainer .tree-chevron').forEach(
+            el => el.innerHTML = '&#x25BC;');
+    },
+
+    collapseAllTree() {
+        document.querySelectorAll('#treeContainer .tree-children').forEach(
+            el => el.style.display = 'none');
+        document.querySelectorAll('#treeContainer .tree-chevron').forEach(
+            el => el.innerHTML = '&#x25B6;');
+    },
+
     onTreeSelect(path, labelEl) {
         document.querySelectorAll('.tree-node.selected').forEach(
             el => el.classList.remove('selected'));
         labelEl.classList.add('selected');
         this.selectedFolder = path === '.' ? '' : path;
         this.applyFilter();
+    },
+
+    // Re-filter tree to show only folders containing search-matched items
+    filterTree() {
+        const container = document.getElementById('treeContainer');
+        if (!this.gridApi) return;
+
+        const q = (document.getElementById('searchBox').value || '').trim();
+        if (!q) {
+            // No search: show all tree nodes
+            container.querySelectorAll('[data-path]').forEach(n => n.style.display = '');
+            return;
+        }
+
+        // Collect visible folder paths from filtered grid rows
+        const visibleFolders = new Set();
+        this.gridApi.forEachNodeAfterFilter(node => {
+            const fp = (node.data._folderPath || '').toLowerCase();
+            if (fp) {
+                visibleFolders.add(fp);
+                // Also add all parent paths
+                const parts = fp.split(/[\\/]/);
+                let cum = '';
+                for (const part of parts) {
+                    cum = cum ? cum + '\\' + part : part;
+                    visibleFolders.add(cum);
+                }
+            }
+        });
+
+        container.querySelectorAll('[data-path]').forEach(n => {
+            const path = (n.dataset.path || '').toLowerCase();
+            n.style.display = visibleFolders.has(path) ? '' : 'none';
+        });
     },
 
     // --- Search + Filter ---
@@ -303,6 +393,7 @@ const Viewer = {
     applyFilter() {
         if (this.gridApi) this.gridApi.onFilterChanged();
         this.updateStatus();
+        this.filterTree();
     },
 
     updateStatus() {
@@ -366,7 +457,8 @@ const Viewer = {
         (data.files || []).forEach(f => {
             const div = document.createElement('div');
             div.className = 'attach-item';
-            div.textContent = f.name;
+            const icon = this.fileIcon(f.name);
+            div.innerHTML = '<span style="margin-right:4px;">' + icon + '</span>' + this.esc(f.name);
             div.onclick = () => this.previewAttachment(f.name, f.path);
             div.ondblclick = () => Bridge.send('openFile', { path: f.path });
             el.appendChild(div);
@@ -719,6 +811,37 @@ const Viewer = {
         } catch (e) {
             container.innerHTML = '<div class="preview-placeholder">Failed to parse PowerPoint file</div>';
         }
+    },
+
+    // --- File type icons ---
+
+    fileIcon(fileName) {
+        const ext = (fileName || '').split('.').pop().toLowerCase();
+        const icons = {
+            pdf: '\u{1F4D1}', // bookmark tabs
+            doc: '\u{1F4DD}', docx: '\u{1F4DD}', // memo
+            xls: '\u{1F4CA}', xlsx: '\u{1F4CA}', // bar chart
+            ppt: '\u{1F4FD}', pptx: '\u{1F4FD}', // projector
+            png: '\u{1F5BC}', jpg: '\u{1F5BC}', jpeg: '\u{1F5BC}',
+            gif: '\u{1F5BC}', bmp: '\u{1F5BC}', svg: '\u{1F5BC}',
+            webp: '\u{1F5BC}', ico: '\u{1F5BC}', // framed picture
+            zip: '\u{1F4E6}', '7z': '\u{1F4E6}', rar: '\u{1F4E6}',
+            gz: '\u{1F4E6}', tar: '\u{1F4E6}', // package
+            txt: '\u{1F4C4}', log: '\u{1F4C4}', csv: '\u{1F4C4}', // page
+            html: '\u{1F310}', htm: '\u{1F310}', // globe
+            js: '\u{2699}', cs: '\u{2699}', py: '\u{2699}', ps1: '\u{2699}',
+            bat: '\u{2699}', sh: '\u{2699}', vbs: '\u{2699}',
+            bas: '\u{2699}', cls: '\u{2699}', frm: '\u{2699}', // gear
+            json: '\u{1F4CB}', xml: '\u{1F4CB}', yaml: '\u{1F4CB}',
+            yml: '\u{1F4CB}', ini: '\u{1F4CB}', cfg: '\u{1F4CB}',
+            toml: '\u{1F4CB}', // clipboard
+            msg: '\u{2709}', eml: '\u{2709}', // envelope
+            mp4: '\u{1F3AC}', avi: '\u{1F3AC}', mkv: '\u{1F3AC}',
+            mov: '\u{1F3AC}', wmv: '\u{1F3AC}', // clapper
+            mp3: '\u{1F3B5}', wav: '\u{1F3B5}', flac: '\u{1F3B5}',
+            m4a: '\u{1F3B5}', wma: '\u{1F3B5}', // music note
+        };
+        return icons[ext] || '\u{1F4C4}'; // default: page
     },
 
     // --- Helpers ---

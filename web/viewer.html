@@ -68,9 +68,10 @@
 
 <!-- Top bar -->
 <div class="top-bar">
-    <fluent-select id="profileSelect" size="small" style="width:200px;" onchange="Viewer.onProfileChange()"></fluent-select>
+    <select id="profileSelect" style="width:200px;padding:3px 6px;font-size:12px;border:1px solid #d0d0d0;border-radius:4px;max-height:28px;" onchange="Viewer.onProfileChange()"></select>
     <input id="searchBox" type="text" placeholder="Search..." oninput="Viewer.onSearch()">
     <button id="filterToggle" onclick="Viewer.toggleAdvancedFilter()" style="background:none;border:1px solid #d0d0d0;border-radius:4px;padding:2px 8px;font-size:11px;cursor:pointer;" title="Advanced filter">&#x25BC; Filter</button>
+    <button onclick="Viewer.refresh()" style="background:none;border:1px solid #d0d0d0;border-radius:4px;padding:2px 8px;font-size:11px;cursor:pointer;" title="Refresh">&#x21BB;</button>
     <span id="statusText" style="font-size:11px;color:#999;white-space:nowrap;">0 items</span>
 </div>
 <div id="advancedFilter" style="display:none;padding:4px 10px 6px;border-bottom:1px solid #e5e5e5;background:#fafafa;font-size:12px;">
@@ -88,6 +89,10 @@
 <!-- Main 3-pane area -->
 <div class="main-area">
     <div class="left-panel" id="leftPanel">
+        <div style="display:flex;gap:2px;padding:3px 4px;border-bottom:1px solid #e5e5e5;flex-shrink:0;">
+            <button onclick="Viewer.expandAllTree()" style="background:none;border:1px solid #d0d0d0;border-radius:3px;padding:1px 6px;font-size:10px;cursor:pointer;" title="Expand all">&#x25BC;</button>
+            <button onclick="Viewer.collapseAllTree()" style="background:none;border:1px solid #d0d0d0;border-radius:3px;padding:1px 6px;font-size:10px;cursor:pointer;" title="Collapse all">&#x25B6;</button>
+        </div>
         <div class="tree-area" id="treeContainer"></div>
     </div>
     <div class="resizer" id="resizer1"></div>

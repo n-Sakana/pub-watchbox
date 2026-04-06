@@ -192,6 +192,12 @@ namespace WatchBox
 
         // --- Zip extraction ---
 
+        static string LongPath(string path)
+        {
+            if (path.StartsWith(@"\\?\")) return path;
+            return @"\\?\" + Path.GetFullPath(path);
+        }
+
         static bool TryExtractZip(string zipPath, string destDir)
         {
             string extractDir = Path.Combine(destDir,
@@ -220,9 +226,19 @@ namespace WatchBox
                     {
                         if (string.IsNullOrEmpty(entry.Name)) continue;
                         string entryDest = Path.Combine(extractDir, entry.FullName);
-                        string entryDir = Path.GetDirectoryName(entryDest);
+                        // Use long path prefix to handle paths > 260 chars
+                        string entryDestLong = LongPath(entryDest);
+                        string entryDir = Path.GetDirectoryName(entryDestLong);
                         Directory.CreateDirectory(entryDir);
-                        try { entry.ExtractToFile(entryDest, true); }
+                        try
+                        {
+                            using (var src = entry.Open())
+                            using (var dst = new FileStream(entryDestLong,
+                                FileMode.Create, FileAccess.Write, FileShare.None))
+                            {
+                                src.CopyTo(dst);
+                            }
+                        }
                         catch { }
                     }
                 }
