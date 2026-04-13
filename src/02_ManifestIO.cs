@@ -10,7 +10,7 @@ namespace WatchBox
     // Folder format: item_id,file_name,file_path,folder_path,relative_path,file_size,modified_at
     public static class ManifestIO
     {
-        const string MailHeader = "entry_id,sender_email,sender_name,subject,received_at,folder_path,body_path,msg_path,attachment_paths,mail_folder,body_text";
+        const string MailHeader = "entry_id,sender_email,sender_name,subject,received_at,folder_path,body_path,msg_path,attachment_paths,mail_folder,body_text,to_recipients,cc_recipients";
         const string FolderHeader = "item_id,file_name,file_path,folder_path,relative_path,file_size,modified_at";
 
         // Resolve manifest path for reading (check both names, prefer hidden)
@@ -46,6 +46,28 @@ namespace WatchBox
                 ids.Add(id);
             }
             return ids;
+        }
+
+        // --- Load dedup keys for mail duplicate detection ---
+        // Returns composite keys: "subject_lower|sender_lower|received_at"
+
+        public static HashSet<string> LoadDedupKeys(string outputRoot)
+        {
+            var keys = new HashSet<string>();
+            string path = ResolvePath(outputRoot);
+            if (!File.Exists(path)) return keys;
+            foreach (var line in File.ReadAllLines(path, Encoding.UTF8))
+            {
+                if (string.IsNullOrEmpty(line)) continue;
+                var cols = CsvSplit(line);
+                if (cols.Length < 5 || cols[0] == "entry_id") continue;
+                // cols: 1=sender_email, 3=subject, 4=received_at
+                string key = (cols.Length > 3 ? cols[3] : "").ToLower() + "|" +
+                             (cols.Length > 1 ? cols[1] : "").ToLower() + "|" +
+                             (cols.Length > 4 ? cols[4] : "");
+                keys.Add(key);
+            }
+            return keys;
         }
 
         // --- Load full rows keyed by item ID ---
@@ -96,7 +118,8 @@ namespace WatchBox
         public static void AppendMailRow(string outputRoot, string entryId,
             string senderEmail, string senderName, string subject, DateTime receivedAt,
             string folderPath, string bodyPath, string msgPath, string attachmentPaths,
-            string mailFolder, string bodyText, bool hide = true)
+            string mailFolder, string bodyText,
+            string toRecipients, string ccRecipients, bool hide = true)
         {
             var csvPath = WritePath(outputRoot, hide);
             if (!File.Exists(csvPath))
@@ -104,19 +127,25 @@ namespace WatchBox
                     new UTF8Encoding(true));
 
             string line = string.Join(",", new[] {
-                entryId,
-                senderEmail,
-                senderName,
+                CsvQuote(entryId),
+                CsvQuote(senderEmail),
+                CsvQuote(senderName),
                 CsvQuote(subject),
                 receivedAt.ToString("yyyy-MM-dd\\THH:mm:ss"),
-                folderPath,
-                bodyPath,
-                msgPath,
-                attachmentPaths,
-                mailFolder,
-                CsvQuote(bodyText)
+                CsvQuote(folderPath),
+                CsvQuote(bodyPath),
+                CsvQuote(msgPath),
+                CsvQuote(attachmentPaths),
+                CsvQuote(mailFolder),
+                CsvQuote(bodyText),
+                CsvQuote(toRecipients ?? ""),
+                CsvQuote(ccRecipients ?? "")
             });
-            File.AppendAllText(csvPath, line + Environment.NewLine, new UTF8Encoding(true));
+            using (var fs = new FileStream(csvPath, FileMode.Append, FileAccess.Write, FileShare.ReadWrite))
+            using (var sw = new StreamWriter(fs, new UTF8Encoding(true)))
+            {
+                sw.WriteLine(line);
+            }
         }
 
         // --- Append a folder row ---
@@ -131,15 +160,19 @@ namespace WatchBox
                     new UTF8Encoding(true));
 
             string line = string.Join(",", new[] {
-                itemId,
+                CsvQuote(itemId),
                 CsvQuote(fileName),
-                filePath,
-                folderPath,
-                relativePath,
+                CsvQuote(filePath),
+                CsvQuote(folderPath),
+                CsvQuote(relativePath),
                 fileSize.ToString(),
                 modifiedAt.ToString("yyyy-MM-dd\\THH:mm:ss")
             });
-            File.AppendAllText(csvPath, line + Environment.NewLine, new UTF8Encoding(true));
+            using (var fs = new FileStream(csvPath, FileMode.Append, FileAccess.Write, FileShare.ReadWrite))
+            using (var sw = new StreamWriter(fs, new UTF8Encoding(true)))
+            {
+                sw.WriteLine(line);
+            }
         }
 
         // --- Rewrite manifest removing specific IDs ---
@@ -171,11 +204,11 @@ namespace WatchBox
             foreach (var r in rows)
             {
                 lines.Add(string.Join(",", new[] {
-                    r.ItemId,
+                    CsvQuote(r.ItemId),
                     CsvQuote(r.FileName),
-                    r.FilePath,
-                    r.FolderPath,
-                    r.RelativePath,
+                    CsvQuote(r.FilePath),
+                    CsvQuote(r.FolderPath),
+                    CsvQuote(r.RelativePath),
                     r.FileSize,
                     r.ModifiedAt
                 }));

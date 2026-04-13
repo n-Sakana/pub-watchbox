@@ -12,6 +12,8 @@ const Viewer = {
     logData: [],
     viewerLastOpened: '',
     _advancedFilterOpen: false,
+    _searchTimer: null,
+    _currentSearch: '',
 
     init() {
         Bridge.on('profilesLoaded', (data) => this.onProfilesLoaded(data));
@@ -23,6 +25,7 @@ const Viewer = {
         Bridge.on('configValue', (data) => this.onConfigValue(data));
         Bridge.send('getProfiles');
         Bridge.send('getConfigValue', { key: 'viewer_last_opened' });
+        document.addEventListener('click', () => this.hideTreeContextMenu());
     },
 
     onLogLoaded(data) {
@@ -87,6 +90,17 @@ const Viewer = {
         if (!profile) return;
         this.currentType = profile.type || 'mail';
         this.selectedFolder = '';
+        this._currentSearch = '';
+        // Reset search bar and advanced filters
+        document.getElementById('searchBox').value = '';
+        const df = document.getElementById('filterDateFrom');
+        const dt = document.getElementById('filterDateTo');
+        const fs = document.getElementById('filterSender');
+        const fa = document.getElementById('filterHasAttach');
+        if (df) df.value = '';
+        if (dt) dt.value = '';
+        if (fs) fs.value = '';
+        if (fa) fa.checked = false;
         this.clearDetail();
         Bridge.send('getManifest', { profileIndex: idx });
     },
@@ -118,7 +132,7 @@ const Viewer = {
         const isMail = this.currentType === 'mail';
 
         const colDefs = isMail ? [
-            { field: 'date', headerName: 'Date', maxWidth: 120, sort: 'desc',
+            { field: 'date', headerName: 'Date/Time', maxWidth: 160, sort: 'desc',
               cellRenderer: (params) => {
                   const val = params.value || '';
                   const raw = this.manifestRows[params.data._idx];
@@ -148,17 +162,17 @@ const Viewer = {
                 const attPaths = r.attachment_paths || '';
                 return {
                     _idx: i,
-                    date: (r.received_at || '').substring(0, 10),
+                    date: (r.received_at || '').replace('T', ' '),
                     sender: r.sender_name || r.sender_email || '',
                     subject: r.subject || '',
                     attachCount: attPaths ? attPaths.split('|').length : 0,
-                    _folderPath: (r.folder_path || '').replace(/^[\\/]+/, '')
+                    _folderPath: (r.folder_path || '').replace(/^[\\/]+/, '').replace(/\//g, '\\')
                 };
             } else {
                 let fp = r.folder_path || '';
                 if (this.outputRoot && fp.toLowerCase().startsWith(this.outputRoot.toLowerCase()))
                     fp = fp.substring(this.outputRoot.length);
-                fp = fp.replace(/^[\\/]+/, '') || '.';
+                fp = fp.replace(/^[\\/]+/, '').replace(/\//g, '\\') || '.';
                 return {
                     _idx: i,
                     name: r.file_name || '',
@@ -215,13 +229,18 @@ const Viewer = {
         container.innerHTML = '';
 
         this._folderCounts = {};
+        this._folderLastModified = {};
         this.manifestRows.forEach(r => {
             let fp = r.folder_path || '';
             if (this.currentType !== 'mail' && outputRoot &&
                 fp.toLowerCase().startsWith(outputRoot.toLowerCase()))
                 fp = fp.substring(outputRoot.length);
-            fp = fp.replace(/^[\\/]+/, '') || '.';
+            fp = fp.replace(/^[\\/]+/, '').replace(/\//g, '\\') || '.';
             this._folderCounts[fp] = (this._folderCounts[fp] || 0) + 1;
+            // Track latest datetime per folder
+            const ts = this.currentType === 'mail' ? (r.received_at || '') : (r.modified_at || '');
+            if (ts && (!this._folderLastModified[fp] || ts > this._folderLastModified[fp]))
+                this._folderLastModified[fp] = ts;
         });
 
         this._buildTreeNodes(container, this._folderCounts);
@@ -255,7 +274,7 @@ const Viewer = {
 
                 const chevron = document.createElement('span');
                 chevron.className = 'tree-chevron';
-                chevron.innerHTML = '&#x25B6;';
+                chevron.innerHTML = '&#x25BC;';
                 chevron.onclick = (e) => { e.stopPropagation(); this.toggleTreeNode(node); };
 
                 const text = document.createElement('span');
@@ -270,7 +289,17 @@ const Viewer = {
                     badge.textContent = count;
                     label.appendChild(badge);
                 }
+                if (isLeaf && this._folderLastModified && this._folderLastModified[fp]) {
+                    const ts = document.createElement('span');
+                    ts.className = 'tree-date';
+                    ts.textContent = this._folderLastModified[fp].replace('T', ' ');
+                    label.appendChild(ts);
+                }
                 label.onclick = () => this.onTreeSelect(cumPath, label);
+                label.addEventListener('contextmenu', (e) => {
+                    e.preventDefault();
+                    this.showTreeContextMenu(e.clientX, e.clientY, cumPath);
+                });
                 node.appendChild(label);
 
                 const children = document.createElement('div');
@@ -314,12 +343,35 @@ const Viewer = {
         this.applyFilter();
     },
 
+    showTreeContextMenu(x, y, folderPath) {
+        const menu = document.getElementById('contextMenu');
+        menu.innerHTML = '';
+        const item = document.createElement('div');
+        item.className = 'ctx-item';
+        item.textContent = 'Open in Explorer';
+        item.onclick = () => {
+            this.hideTreeContextMenu();
+            const base = this.outputRoot || '';
+            const fullPath = base ? base + '\\' + folderPath.replace(/\//g, '\\')
+                                  : folderPath.replace(/\//g, '\\');
+            if (fullPath) Bridge.send('openDirectory', { path: fullPath });
+        };
+        menu.appendChild(item);
+        menu.style.display = 'block';
+        menu.style.left = Math.min(x, window.innerWidth - 180) + 'px';
+        menu.style.top = Math.min(y, window.innerHeight - 40) + 'px';
+    },
+
+    hideTreeContextMenu() {
+        document.getElementById('contextMenu').style.display = 'none';
+    },
+
     // Re-filter tree to show only folders containing search-matched items
     filterTree() {
         const container = document.getElementById('treeContainer');
         if (!this.gridApi) return;
 
-        const q = (document.getElementById('searchBox').value || '').trim();
+        const q = this._currentSearch;
         if (!q) {
             // No search: show all tree nodes
             container.querySelectorAll('[data-path]').forEach(n => n.style.display = '');
@@ -350,11 +402,21 @@ const Viewer = {
 
     // --- Search + Filter ---
 
-    onSearch() { this.applyFilter(); },
+    onSearchInput() {
+        clearTimeout(this._searchTimer);
+        this._searchTimer = setTimeout(() => this.onSearch(), 150);
+    },
+
+    onSearch() {
+        // Search always targets root folder (clear folder selection)
+        this.selectedFolder = '';
+        document.querySelectorAll('.tree-node.selected').forEach(
+            el => el.classList.remove('selected'));
+        this.applyFilter();
+    },
 
     hasFilter() {
-        const q = (document.getElementById('searchBox').value || '').trim();
-        if (q.length > 0 || this.selectedFolder.length > 0) return true;
+        if (this._currentSearch.length > 0 || this.selectedFolder.length > 0) return true;
         const df = document.getElementById('filterDateFrom');
         const dt = document.getElementById('filterDateTo');
         const fs = document.getElementById('filterSender');
@@ -373,10 +435,9 @@ const Viewer = {
             const sf = this.selectedFolder.toLowerCase();
             if (fp !== sf && !fp.startsWith(sf + '\\') && !fp.startsWith(sf + '/')) return false;
         }
-        const q = (document.getElementById('searchBox').value || '').trim().toLowerCase();
-        if (q) {
+        if (this._currentSearch) {
             const text = Object.values(data).join(' ').toLowerCase();
-            if (!text.includes(q)) return false;
+            if (!text.includes(this._currentSearch)) return false;
         }
         // Advanced filters
         const dateFrom = (document.getElementById('filterDateFrom') || {}).value || '';
@@ -391,6 +452,7 @@ const Viewer = {
     },
 
     applyFilter() {
+        this._currentSearch = (document.getElementById('searchBox').value || '').trim().toLowerCase();
         if (this.gridApi) this.gridApi.onFilterChanged();
         this.updateStatus();
         this.filterTree();
@@ -435,11 +497,24 @@ const Viewer = {
         document.getElementById('attachPreviewPanel').style.display='none';
         this._attachPreviewActive = false;
 
-        document.getElementById('mailHeader').innerHTML =
+        let headerHtml =
             '<b>From:</b> ' + this.esc(r.sender_name || '') +
-            ' &lt;' + this.esc(r.sender_email || '') + '&gt;<br>' +
+            ' &lt;' + this.esc(r.sender_email || '') + '&gt;<br>';
+        if (r.to_recipients)
+            headerHtml += '<b>To:</b> ' + this.esc(r.to_recipients) + '<br>';
+        if (r.cc_recipients)
+            headerHtml += '<b>CC:</b> ' + this.esc(r.cc_recipients) + '<br>';
+        headerHtml +=
             '<b>Date:</b> ' + this.esc(r.received_at || '') + '<br>' +
             '<b>Subject:</b> ' + this.esc(r.subject || '');
+        document.getElementById('mailHeader').innerHTML = headerHtml;
+        if (r.mail_folder) {
+            const openDirBtn = document.createElement('button');
+            openDirBtn.textContent = 'Open folder';
+            openDirBtn.style.cssText = 'margin-top:4px;padding:2px 8px;font-size:11px;background:none;border:1px solid #d0d0d0;border-radius:4px;cursor:pointer;';
+            openDirBtn.onclick = () => Bridge.send('openDirectory', { path: r.mail_folder });
+            document.getElementById('mailHeader').appendChild(openDirBtn);
+        }
 
         Bridge.send('getMailBody', {
             bodyPath: r.body_path || '', bodyText: r.body_text || ''
@@ -517,6 +592,12 @@ const Viewer = {
         openBtn.style.marginLeft = '8px';
         openBtn.onclick = () => this.openCurrentFile();
         fi.appendChild(openBtn);
+        const openDirBtn = document.createElement('fluent-button');
+        openDirBtn.setAttribute('size', 'small');
+        openDirBtn.textContent = 'Open folder';
+        openDirBtn.style.marginLeft = '4px';
+        openDirBtn.onclick = () => Bridge.send('openDirectory', { path: r.file_path || '' });
+        fi.appendChild(openDirBtn);
 
         this._currentFilePath = r.file_path || '';
         this.requestPreview(r.file_path || '', r.file_name || '');
@@ -817,31 +898,38 @@ const Viewer = {
 
     fileIcon(fileName) {
         const ext = (fileName || '').split('.').pop().toLowerCase();
-        const icons = {
-            pdf: '\u{1F4D1}', // bookmark tabs
-            doc: '\u{1F4DD}', docx: '\u{1F4DD}', // memo
-            xls: '\u{1F4CA}', xlsx: '\u{1F4CA}', // bar chart
-            ppt: '\u{1F4FD}', pptx: '\u{1F4FD}', // projector
-            png: '\u{1F5BC}', jpg: '\u{1F5BC}', jpeg: '\u{1F5BC}',
-            gif: '\u{1F5BC}', bmp: '\u{1F5BC}', svg: '\u{1F5BC}',
-            webp: '\u{1F5BC}', ico: '\u{1F5BC}', // framed picture
-            zip: '\u{1F4E6}', '7z': '\u{1F4E6}', rar: '\u{1F4E6}',
-            gz: '\u{1F4E6}', tar: '\u{1F4E6}', // package
-            txt: '\u{1F4C4}', log: '\u{1F4C4}', csv: '\u{1F4C4}', // page
-            html: '\u{1F310}', htm: '\u{1F310}', // globe
-            js: '\u{2699}', cs: '\u{2699}', py: '\u{2699}', ps1: '\u{2699}',
-            bat: '\u{2699}', sh: '\u{2699}', vbs: '\u{2699}',
-            bas: '\u{2699}', cls: '\u{2699}', frm: '\u{2699}', // gear
-            json: '\u{1F4CB}', xml: '\u{1F4CB}', yaml: '\u{1F4CB}',
-            yml: '\u{1F4CB}', ini: '\u{1F4CB}', cfg: '\u{1F4CB}',
-            toml: '\u{1F4CB}', // clipboard
-            msg: '\u{2709}', eml: '\u{2709}', // envelope
-            mp4: '\u{1F3AC}', avi: '\u{1F3AC}', mkv: '\u{1F3AC}',
-            mov: '\u{1F3AC}', wmv: '\u{1F3AC}', // clapper
-            mp3: '\u{1F3B5}', wav: '\u{1F3B5}', flac: '\u{1F3B5}',
-            m4a: '\u{1F3B5}', wma: '\u{1F3B5}', // music note
+        // Inline SVG icons with distinct colors per file type
+        const doc = 'M3 1h7l4 4v10H3V1z'; // document shape
+        const svg = (color) =>
+            '<svg width="14" height="14" viewBox="0 0 16 16" style="vertical-align:middle;">' +
+            '<path d="' + doc + '" fill="' + color + '" opacity="0.85"/>' +
+            '<path d="M10 1v4h4" fill="none" stroke="' + color + '" stroke-width="0.8" opacity="0.5"/>' +
+            '</svg>';
+        const colorMap = {
+            pdf: '#DC2626',
+            doc: '#2563EB', docx: '#2563EB',
+            xls: '#16A34A', xlsx: '#16A34A',
+            ppt: '#EA580C', pptx: '#EA580C',
+            png: '#9333EA', jpg: '#9333EA', jpeg: '#9333EA',
+            gif: '#9333EA', bmp: '#9333EA', svg: '#9333EA',
+            webp: '#9333EA', ico: '#9333EA',
+            zip: '#D97706', '7z': '#D97706', rar: '#D97706',
+            gz: '#D97706', tar: '#D97706',
+            txt: '#6B7280', log: '#6B7280', csv: '#6B7280',
+            html: '#2563EB', htm: '#2563EB',
+            js: '#0D9488', cs: '#0D9488', py: '#0D9488', ps1: '#0D9488',
+            bat: '#0D9488', sh: '#0D9488', vbs: '#0D9488',
+            bas: '#0D9488', cls: '#0D9488', frm: '#0D9488',
+            json: '#0D9488', xml: '#0D9488', yaml: '#0D9488',
+            yml: '#0D9488', ini: '#0D9488', cfg: '#0D9488',
+            toml: '#0D9488',
+            msg: '#4F46E5', eml: '#4F46E5',
+            mp4: '#DB2777', avi: '#DB2777', mkv: '#DB2777',
+            mov: '#DB2777', wmv: '#DB2777',
+            mp3: '#0891B2', wav: '#0891B2', flac: '#0891B2',
+            m4a: '#0891B2', wma: '#0891B2',
         };
-        return icons[ext] || '\u{1F4C4}'; // default: page
+        return svg(colorMap[ext] || '#9CA3AF');
     },
 
     // --- Helpers ---

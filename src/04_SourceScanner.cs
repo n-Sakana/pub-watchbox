@@ -24,6 +24,9 @@ namespace WatchBox
         public string BodyPath;
         public string MsgPath;
         public string AttachmentPaths;
+        // Recipient addresses (semicolon-delimited SMTP addresses)
+        public string ToRecipients;
+        public string CcRecipients;
     }
 
     public class RunResult

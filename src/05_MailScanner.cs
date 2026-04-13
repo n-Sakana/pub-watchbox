@@ -32,6 +32,7 @@ namespace WatchBox
         dynamic _olApp;
         dynamic _olNs;
         HashSet<string> _exported;
+        HashSet<string> _dedupKeys;
         int _itemCount;
         string _filterMode;
         List<string> _filterWords;
@@ -80,33 +81,34 @@ namespace WatchBox
                             list.Add(smtp);
                     }
                     catch { }
+                    finally { try { Marshal.ReleaseComObject(acct); } catch { } }
                 }
                 // Also enumerate stores not tied to any account (shared/delegate mailboxes)
                 var accountStoreIds = new HashSet<string>();
                 foreach (dynamic acct in _olNs.Accounts)
                 {
-                    try { accountStoreIds.Add((string)acct.DeliveryStore.StoreID); } catch { }
+                    try
+                    {
+                        dynamic ds = acct.DeliveryStore;
+                        accountStoreIds.Add((string)ds.StoreID);
+                        try { Marshal.ReleaseComObject(ds); } catch { }
+                    }
+                    catch { }
+                    finally { try { Marshal.ReleaseComObject(acct); } catch { } }
                 }
                 foreach (dynamic store in _olNs.Stores)
                 {
                     try
                     {
                         if (accountStoreIds.Contains((string)store.StoreID)) continue;
-                        string addr = "";
-                        // Try PR_EMAIL_ADDRESS
-                        try { addr = ((string)store.GetRootFolder().PropertyAccessor.GetProperty(
-                            "http://schemas.microsoft.com/mapi/proptag/0x39FE001E")).ToLower(); } catch { }
-                        // Try PR_SMTP_ADDRESS (alternative property for shared mailboxes)
-                        if (string.IsNullOrEmpty(addr))
-                            try { addr = ((string)store.GetRootFolder().PropertyAccessor.GetProperty(
-                                "http://schemas.microsoft.com/mapi/proptag/0x39FE001F")).ToLower(); } catch { }
-                        // Fallback to display name
+                        string addr = GetStoreSmtp(store);
                         if (string.IsNullOrEmpty(addr))
                             try { addr = ((string)store.DisplayName).ToLower(); } catch { }
                         if (!string.IsNullOrEmpty(addr) && seen.Add(addr))
                             list.Add(addr);
                     }
                     catch { }
+                    finally { try { Marshal.ReleaseComObject(store); } catch { } }
                 }
             }
             catch { }
@@ -127,9 +129,14 @@ namespace WatchBox
                         {
                             string smtp = GetStoreSmtp(store);
                             if (!string.IsNullOrEmpty(smtp))
-                                CollectFolders(store.GetRootFolder(), 0, smtp + ": ", list);
+                            {
+                                dynamic rootF = store.GetRootFolder();
+                                try { CollectFolders(rootF, 0, smtp + ": ", list); }
+                                finally { try { Marshal.ReleaseComObject(rootF); } catch { } }
+                            }
                         }
                         catch { }
+                        finally { try { Marshal.ReleaseComObject(store); } catch { } }
                     }
                 }
                 else
@@ -138,13 +145,25 @@ namespace WatchBox
                     bool found = false;
                     foreach (dynamic acct in _olNs.Accounts)
                     {
-                        if (string.Equals((string)acct.SmtpAddress, accountFilter,
-                            StringComparison.OrdinalIgnoreCase))
+                        try
                         {
-                            CollectFolders(acct.DeliveryStore.GetRootFolder(), 0, "", list);
-                            found = true;
-                            break;
+                            if (string.Equals((string)acct.SmtpAddress, accountFilter,
+                                StringComparison.OrdinalIgnoreCase))
+                            {
+                                dynamic ds = acct.DeliveryStore;
+                                dynamic rootF = ds.GetRootFolder();
+                                try { CollectFolders(rootF, 0, "", list); }
+                                finally
+                                {
+                                    try { Marshal.ReleaseComObject(rootF); } catch { }
+                                    try { Marshal.ReleaseComObject(ds); } catch { }
+                                }
+                                found = true;
+                                break;
+                            }
                         }
+                        catch { }
+                        finally { try { Marshal.ReleaseComObject(acct); } catch { } }
                     }
                     // Shared/delegate mailbox: match by store SMTP or display name
                     if (!found)
@@ -156,11 +175,14 @@ namespace WatchBox
                                 string smtp = GetStoreSmtp(store);
                                 if (string.Equals(smtp, accountFilter, StringComparison.OrdinalIgnoreCase))
                                 {
-                                    CollectFolders(store.GetRootFolder(), 0, "", list);
+                                    dynamic rootF = store.GetRootFolder();
+                                    try { CollectFolders(rootF, 0, "", list); }
+                                    finally { try { Marshal.ReleaseComObject(rootF); } catch { } }
                                     break;
                                 }
                             }
                             catch { }
+                            finally { try { Marshal.ReleaseComObject(store); } catch { } }
                         }
                     }
                 }
@@ -188,6 +210,7 @@ namespace WatchBox
                         CollectFolders(child, depth + 1, prefix, list);
                     }
                     catch { }
+                    finally { try { Marshal.ReleaseComObject(child); } catch { } }
                 }
             }
             catch { }
@@ -221,6 +244,8 @@ namespace WatchBox
             // Remove IDs whose output folders were manually deleted
             _exported = new HashSet<string>(knownIds);
             PurgeStaleMailIds(outputRoot, _exported);
+            // Load dedup keys AFTER purge so stale entries are excluded
+            _dedupKeys = ManifestIO.LoadDedupKeys(outputRoot);
 
             // Build two separate filters:
             // 1. Date filter (Jet syntax, local time) — accurate timezone handling
@@ -305,9 +330,11 @@ namespace WatchBox
                         SafeName(smtp) + NormalizeFolderPath((string)folder.FolderPath));
                 Directory.CreateDirectory(folderRoot);
 
-                dynamic items = folder.Items;
+                dynamic rawItems = folder.Items;
+                dynamic items = rawItems;
+                dynamic items2 = null;
                 // Chain two Restrict() calls: date (Jet, local time) then keywords (DASL)
-                if (dateFilter != null) items = items.Restrict(dateFilter);
+                if (dateFilter != null) { items = items.Restrict(dateFilter); items2 = items; }
                 if (keywordFilter != null) items = items.Restrict(keywordFilter);
 
                 dynamic item = items.GetFirst();
@@ -328,6 +355,9 @@ namespace WatchBox
                                 try { body = (string)item.Body ?? ""; } catch { }
                                 try { senderAddr = (string)item.SenderEmailAddress ?? ""; } catch { }
                                 try { senderName = (string)item.SenderName ?? ""; } catch { }
+                                dynamic itemParent = item.Parent;
+                                string itemFolderPath = (string)itemParent.FolderPath;
+                                try { Marshal.ReleaseComObject(itemParent); } catch { }
                                 _cacheTarget.Add(new CachedMailItem {
                                     EntryID = eid,
                                     Subject = subj,
@@ -337,18 +367,30 @@ namespace WatchBox
                                     SubjectLower = subj.ToLower(),
                                     SenderEmailLower = senderAddr.ToLower(),
                                     ReceivedTime = (DateTime)item.ReceivedTime,
-                                    FolderPath = (string)item.Parent.FolderPath
+                                    FolderPath = itemFolderPath
                                 });
                                 OnProgress(_cacheTarget.Count, subj);
                             }
                             else if (!_exported.Contains(eid))
                             {
+                                // Secondary dedup: skip if subject+sender+date match
+                                string subj2 = ""; string saddr2 = "";
+                                DateTime recv2 = DateTime.MinValue;
+                                try { subj2 = ((string)item.Subject ?? "").ToLower(); } catch { }
+                                try { saddr2 = ((string)item.SenderEmailAddress ?? "").ToLower(); } catch { }
+                                try { recv2 = (DateTime)item.ReceivedTime; } catch { }
+                                string dedupKey = subj2 + "|" + saddr2 + "|" +
+                                    recv2.ToString("yyyy-MM-dd\\THH:mm:ss");
+                                if (_dedupKeys != null && _dedupKeys.Contains(dedupKey))
+                                    continue;
+
                                 // Export files immediately (msg, body, meta, attachments)
                                 var sr = ExportAndBuildResult(item, folderRoot, outputRoot, smtp);
                                 if (sr != null)
                                 {
                                     results.Add(sr);
                                     _exported.Add(eid);
+                                    if (_dedupKeys != null) _dedupKeys.Add(dedupKey);
                                     OnProgress(results.Count, sr.Subject);
                                 }
                             }
@@ -365,12 +407,18 @@ namespace WatchBox
                     try { item = items.GetNext(); } catch { break; }
                 }
                 try { Marshal.ReleaseComObject(items); } catch { }
+                if (items2 != null && !object.ReferenceEquals(items2, items))
+                    try { Marshal.ReleaseComObject(items2); } catch { }
+                if (!object.ReferenceEquals(rawItems, items) &&
+                    (items2 == null || !object.ReferenceEquals(rawItems, items2)))
+                    try { Marshal.ReleaseComObject(rawItems); } catch { }
 
                 if (recurse && !CancelRequested)
                     foreach (dynamic child in folder.Folders)
                     {
                         if (CancelRequested) break;
-                        ScanTree(child, outputRoot, smtp, dateFilter, keywordFilter, results, true);
+                        try { ScanTree(child, outputRoot, smtp, dateFilter, keywordFilter, results, true); }
+                        finally { try { Marshal.ReleaseComObject(child); } catch { } }
                     }
             }
             catch { }
@@ -454,6 +502,8 @@ namespace WatchBox
 
             _exported = new HashSet<string>(knownIds);
             PurgeStaleMailIds(outputRoot, _exported);
+            // Load dedup keys AFTER purge so stale entries are excluded
+            _dedupKeys = ManifestIO.LoadDedupKeys(outputRoot);
 
             string smtp = (filterAccount ?? "").ToLower();
             string filterFolder = config.ContainsKey("outlook_folder") ? config["outlook_folder"] : "";
@@ -472,6 +522,11 @@ namespace WatchBox
 
                 // Already exported
                 if (_exported.Contains(ci.EntryID)) continue;
+
+                // Secondary dedup: subject+sender+date composite key
+                string dedupKey = ci.SubjectLower + "|" + ci.SenderEmailLower + "|" +
+                    ci.ReceivedTime.ToString("yyyy-MM-dd\\THH:mm:ss");
+                if (_dedupKeys != null && _dedupKeys.Contains(dedupKey)) continue;
 
                 // Keyword match in memory
                 if (words.Count > 0)
@@ -494,9 +549,10 @@ namespace WatchBox
                 }
 
                 // Fetch live COM object and export
+                dynamic mail = null;
                 try
                 {
-                    dynamic mail = _olNs.GetItemFromID(ci.EntryID);
+                    mail = _olNs.GetItemFromID(ci.EntryID);
                     string folderRoot;
                     if (_flatOutput)
                         folderRoot = outputRoot;
@@ -510,10 +566,16 @@ namespace WatchBox
                     {
                         results.Add(sr);
                         _exported.Add(ci.EntryID);
+                        if (_dedupKeys != null) _dedupKeys.Add(dedupKey);
                         OnProgress(results.Count, sr.Subject);
                     }
                 }
                 catch { }
+                finally
+                {
+                    if (mail != null)
+                        try { Marshal.ReleaseComObject(mail); } catch { }
+                }
             }
             return results;
         }
@@ -528,34 +590,123 @@ namespace WatchBox
                 Directory.CreateDirectory(mailDir);
                 mail.SaveAs(Path.Combine(mailDir, "mail.msg"), OL_MSG_UNICODE);
                 string bodyText = (string)mail.Body ?? "";
-                File.WriteAllText(Path.Combine(mailDir, "body.txt"), bodyText, Encoding.UTF8);
-
-                var attNames = SaveAttachments(mail, mailDir);
-                WriteMetaJson(Path.Combine(mailDir, "meta.json"), mail, attNames, smtp);
 
                 string senderAddr = "";
                 try { senderAddr = (string)mail.SenderEmailAddress; } catch { }
+                string senderName = (string)mail.SenderName;
+                string subject = (string)mail.Subject;
+                DateTime receivedAt = (DateTime)mail.ReceivedTime;
 
+                // Extract recipient addresses
+                string toRecipients = "";
+                string ccRecipients = "";
+                try
+                {
+                    var toList = new List<string>();
+                    var ccList = new List<string>();
+                    dynamic recipients = mail.Recipients;
+                    int count = (int)recipients.Count;
+                    for (int ri = 1; ri <= count; ri++)
+                    {
+                        dynamic recip = null;
+                        try
+                        {
+                            recip = recipients[ri];
+                            int recipType = (int)recip.Type;
+                            string addr = ResolveRecipientSmtp(recip);
+                            if (!string.IsNullOrEmpty(addr))
+                            {
+                                if (recipType == 1) toList.Add(addr);
+                                else if (recipType == 2) ccList.Add(addr);
+                            }
+                        }
+                        catch { }
+                        finally
+                        {
+                            if (recip != null)
+                                try { Marshal.ReleaseComObject(recip); } catch { }
+                        }
+                    }
+                    try { Marshal.ReleaseComObject(recipients); } catch { }
+                    toRecipients = string.Join(";", toList.ToArray());
+                    ccRecipients = string.Join(";", ccList.ToArray());
+                }
+                catch { }
+
+                // Write body.txt with metadata header
+                var bodyBuilder = new StringBuilder();
+                bodyBuilder.AppendFormat("From: {0} <{1}>\r\n", senderName, senderAddr);
+                if (!string.IsNullOrEmpty(toRecipients))
+                    bodyBuilder.AppendFormat("To: {0}\r\n", toRecipients);
+                if (!string.IsNullOrEmpty(ccRecipients))
+                    bodyBuilder.AppendFormat("CC: {0}\r\n", ccRecipients);
+                bodyBuilder.AppendFormat("Date: {0:yyyy-MM-dd HH:mm:ss}\r\n", receivedAt);
+                bodyBuilder.AppendFormat("Subject: {0}\r\n", subject);
+                bodyBuilder.Append("---\r\n");
+                bodyBuilder.Append(bodyText);
+                File.WriteAllText(Path.Combine(mailDir, "body.txt"),
+                    bodyBuilder.ToString(), Encoding.UTF8);
+
+                var attNames = SaveAttachments(mail, mailDir);
+                WriteMetaJson(Path.Combine(mailDir, "meta.json"), mail, attNames, smtp,
+                    toRecipients, ccRecipients);
+
+                // body_text for manifest: original body without header (for search)
                 string bodyFlat = bodyText.Replace(",", " ").Replace("\r", " ").Replace("\n", " ");
                 if (bodyFlat.Length > 2000) bodyFlat = bodyFlat.Substring(0, 2000);
 
+                dynamic parentFolder = mail.Parent;
+                string folderPath = (string)parentFolder.FolderPath;
+                try { Marshal.ReleaseComObject(parentFolder); } catch { }
+
                 return new ScanResult {
                     ItemId = (string)mail.EntryID,
-                    Name = (string)mail.Subject,
-                    SourcePath = (string)mail.Parent.FolderPath,
+                    Name = subject,
+                    SourcePath = folderPath,
                     SenderEmail = senderAddr,
-                    SenderName = (string)mail.SenderName,
-                    Subject = (string)mail.Subject,
-                    ReceivedAt = (DateTime)mail.ReceivedTime,
+                    SenderName = senderName,
+                    Subject = subject,
+                    ReceivedAt = receivedAt,
                     BodyText = bodyFlat,
                     BodyPath = Path.Combine(mailDir, "body.txt"),
                     MsgPath = Path.Combine(mailDir, "mail.msg"),
                     AttachmentPaths = BuildAttachPaths(attNames, mailDir),
                     AttachmentNames = attNames,
-                    ItemFolder = mailDir
+                    ItemFolder = mailDir,
+                    ToRecipients = toRecipients,
+                    CcRecipients = ccRecipients
                 };
             }
             catch { return null; }
+        }
+
+        // Resolve SMTP address from a Recipient COM object.
+        // Handles Exchange recipients via PropertyAccessor and GetExchangeUser fallback.
+        static string ResolveRecipientSmtp(dynamic recip)
+        {
+            // Try PR_SMTP_ADDRESS (works for most recipients)
+            try
+            {
+                string smtp = (string)recip.PropertyAccessor.GetProperty(
+                    "http://schemas.microsoft.com/mapi/proptag/0x39FE001F");
+                if (!string.IsNullOrEmpty(smtp)) return smtp;
+            }
+            catch { }
+            // Fallback: Exchange user
+            try
+            {
+                dynamic exchUser = recip.AddressEntry.GetExchangeUser();
+                if (exchUser != null)
+                {
+                    string smtp = (string)exchUser.PrimarySmtpAddress;
+                    try { Marshal.ReleaseComObject(exchUser); } catch { }
+                    if (!string.IsNullOrEmpty(smtp)) return smtp;
+                }
+            }
+            catch { }
+            // Last resort: raw Address (may be X500 for Exchange)
+            try { return (string)recip.Address; } catch { }
+            return "";
         }
 
         // --- Filter construction ---
@@ -679,7 +830,14 @@ namespace WatchBox
                 foreach (dynamic child in root.Folders)
                 {
                     var found = FindFolder(child, targetPath);
-                    if (found != null) return found;
+                    if (found != null)
+                    {
+                        // Release child only if it is not the found folder itself
+                        if (!object.ReferenceEquals(found, child))
+                            try { Marshal.ReleaseComObject(child); } catch { }
+                        return found;
+                    }
+                    try { Marshal.ReleaseComObject(child); } catch { }
                 }
             }
             catch { }
@@ -691,11 +849,14 @@ namespace WatchBox
             var names = new List<string>();
             try
             {
-                for (int i = 1; i <= (int)mail.Attachments.Count; i++)
+                dynamic attachments = mail.Attachments;
+                int attCount = (int)attachments.Count;
+                for (int i = 1; i <= attCount; i++)
                 {
+                    dynamic att = null;
                     try
                     {
-                        dynamic att = mail.Attachments[i];
+                        att = attachments[i];
                         string safeFn = SafeName((string)att.FileName);
                         string savePath = Path.Combine(mailDir, safeFn);
                         att.SaveAsFile(savePath);
@@ -712,7 +873,13 @@ namespace WatchBox
                         names.Add(safeFn);
                     }
                     catch { }
+                    finally
+                    {
+                        if (att != null)
+                            try { Marshal.ReleaseComObject(att); } catch { }
+                    }
                 }
+                try { Marshal.ReleaseComObject(attachments); } catch { }
             }
             catch { }
             return names;
@@ -742,10 +909,16 @@ namespace WatchBox
                         break;
                     }
 
+                    string extractDirFull = Path.GetFullPath(extractDir);
                     foreach (var entry in archive.Entries)
                     {
                         if (string.IsNullOrEmpty(entry.Name)) continue;
-                        string entryDest = Path.Combine(extractDir, entry.FullName);
+                        string entryDest = Path.GetFullPath(
+                            Path.Combine(extractDir, entry.FullName));
+                        // Zip slip guard: reject entries that escape the extract directory
+                        if (!entryDest.StartsWith(extractDirFull + "\\") &&
+                            !entryDest.Equals(extractDirFull))
+                            continue;
                         string entryDir = Path.GetDirectoryName(entryDest);
                         Directory.CreateDirectory(entryDir);
                         try { entry.ExtractToFile(entryDest, true); }
@@ -757,7 +930,8 @@ namespace WatchBox
             catch { return false; }
         }
 
-        void WriteMetaJson(string path, dynamic mail, List<string> attNames, string smtp)
+        void WriteMetaJson(string path, dynamic mail, List<string> attNames, string smtp,
+            string toRecipients = "", string ccRecipients = "")
         {
             var attJson = new StringBuilder("[");
             for (int i = 0; i < attNames.Count; i++)
@@ -770,17 +944,24 @@ namespace WatchBox
             string senderAddr = "";
             try { senderAddr = (string)mail.SenderEmailAddress; } catch { }
 
+            dynamic parentFolder = mail.Parent;
+            string folderPathVal = (string)parentFolder.FolderPath;
+            try { Marshal.ReleaseComObject(parentFolder); } catch { }
+
             var json = string.Format(
                 "{{\n  \"entry_id\": \"{0}\",\n  \"mailbox_address\": \"{1}\",\n" +
                 "  \"folder_path\": \"{2}\",\n  \"sender_name\": \"{3}\",\n" +
                 "  \"sender_email\": \"{4}\",\n  \"subject\": \"{5}\",\n" +
                 "  \"received_at\": \"{6:yyyy-MM-dd\\THH:mm:ss}\",\n" +
+                "  \"to_recipients\": \"{7}\",\n  \"cc_recipients\": \"{8}\",\n" +
                 "  \"body_path\": \"body.txt\",\n  \"msg_path\": \"mail.msg\",\n" +
-                "  \"attachments\": {7}\n}}",
+                "  \"attachments\": {9}\n}}",
                 JsonEsc((string)mail.EntryID), JsonEsc(smtp),
-                JsonEsc((string)mail.Parent.FolderPath), JsonEsc((string)mail.SenderName),
+                JsonEsc(folderPathVal), JsonEsc((string)mail.SenderName),
                 JsonEsc(senderAddr), JsonEsc((string)mail.Subject),
-                (DateTime)mail.ReceivedTime, attJson);
+                (DateTime)mail.ReceivedTime,
+                JsonEsc(toRecipients ?? ""), JsonEsc(ccRecipients ?? ""),
+                attJson);
 
             File.WriteAllText(path, json, Encoding.UTF8);
         }
@@ -818,25 +999,41 @@ namespace WatchBox
                 {
                     try
                     {
-                        if ((string)acct.DeliveryStore.StoreID == (string)store.StoreID)
+                        dynamic ds = acct.DeliveryStore;
+                        bool match = (string)ds.StoreID == (string)store.StoreID;
+                        try { Marshal.ReleaseComObject(ds); } catch { }
+                        if (match)
                             return ((string)acct.SmtpAddress).ToLower();
                     }
                     catch { }
+                    finally { try { Marshal.ReleaseComObject(acct); } catch { } }
                 }
             }
             catch { }
+            // Try PR_EMAIL_ADDRESS / PR_SMTP_ADDRESS via root folder
+            dynamic rootF = null;
             try
             {
-                return ((string)store.GetRootFolder().PropertyAccessor.GetProperty(
-                    "http://schemas.microsoft.com/mapi/proptag/0x39FE001E")).ToLower();
+                rootF = store.GetRootFolder();
+                try
+                {
+                    return ((string)rootF.PropertyAccessor.GetProperty(
+                        "http://schemas.microsoft.com/mapi/proptag/0x39FE001E")).ToLower();
+                }
+                catch { }
+                try
+                {
+                    return ((string)rootF.PropertyAccessor.GetProperty(
+                        "http://schemas.microsoft.com/mapi/proptag/0x39FE001F")).ToLower();
+                }
+                catch { }
             }
             catch { }
-            try
+            finally
             {
-                return ((string)store.GetRootFolder().PropertyAccessor.GetProperty(
-                    "http://schemas.microsoft.com/mapi/proptag/0x39FE001F")).ToLower();
+                if (rootF != null)
+                    try { Marshal.ReleaseComObject(rootF); } catch { }
             }
-            catch { }
             try { return ((string)store.DisplayName).ToLower(); } catch { return ""; }
         }
 

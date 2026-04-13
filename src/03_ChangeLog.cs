@@ -24,7 +24,11 @@ namespace WatchBox
                 CsvQuote(name),
                 CsvQuote(details)
             });
-            File.AppendAllText(csvPath, line + Environment.NewLine, new UTF8Encoding(true));
+            using (var fs = new FileStream(csvPath, FileMode.Append, FileAccess.Write, FileShare.ReadWrite))
+            using (var sw = new StreamWriter(fs, new UTF8Encoding(true)))
+            {
+                sw.WriteLine(line);
+            }
         }
 
         // Quote a CSV field if it contains comma, quote, or newline (RFC 4180)

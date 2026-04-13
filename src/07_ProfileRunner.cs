@@ -43,6 +43,7 @@ namespace WatchBox
             }
             finally
             {
+                if (onProgress != null) scanner.ProgressChanged -= onProgress;
                 // Release COM objects when we created the scanner
                 if (ownScanner && scanner is MailScanner)
                     ((MailScanner)scanner).Cleanup();
@@ -127,7 +128,8 @@ namespace WatchBox
                     item.ItemId, item.SenderEmail, item.SenderName,
                     item.Subject, item.ReceivedAt, item.SourcePath,
                     item.BodyPath, item.MsgPath, item.AttachmentPaths,
-                    item.ItemFolder, item.BodyText, hide);
+                    item.ItemFolder, item.BodyText,
+                    item.ToRecipients, item.CcRecipients, hide);
             }
             else
             {

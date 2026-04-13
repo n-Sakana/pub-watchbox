@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
 using System.Threading;
@@ -15,7 +16,8 @@ namespace WatchBox
         System.Windows.Threading.Dispatcher _olDispatcher;
         Action<int, string> _onEvent;
         int _debounceMs = 2000;
-        Dictionary<int, DateTime> _lastEvent = new Dictionary<int, DateTime>();
+        ConcurrentDictionary<int, DateTime> _lastEvent = new ConcurrentDictionary<int, DateTime>();
+        readonly object _watchLock = new object();
 
         public void Start(Action<int, string> onEvent)
         {
@@ -50,11 +52,21 @@ namespace WatchBox
                 _olDispatcher = null;
             }
 
-            foreach (var items in _watchedItems)
+            // Wait for the STA thread to finish before releasing COM objects
+            if (_olThread != null && _olThread.IsAlive)
             {
-                try { System.Runtime.InteropServices.Marshal.ReleaseComObject(items); } catch { }
+                try { _olThread.Join(3000); } catch { }
             }
-            _watchedItems.Clear();
+            _olThread = null;
+
+            lock (_watchLock)
+            {
+                foreach (var items in _watchedItems)
+                {
+                    try { System.Runtime.InteropServices.Marshal.ReleaseComObject(items); } catch { }
+                }
+                _watchedItems.Clear();
+            }
         }
 
         // --- Folder: FileSystemWatcher ---
@@ -175,7 +187,9 @@ namespace WatchBox
                         if (string.Equals((string)acct.SmtpAddress, target.Account,
                             StringComparison.OrdinalIgnoreCase))
                         {
-                            rootFolder = acct.DeliveryStore.GetRootFolder();
+                            dynamic ds = acct.DeliveryStore;
+                            rootFolder = ds.GetRootFolder();
+                            try { System.Runtime.InteropServices.Marshal.ReleaseComObject(ds); } catch { }
                             break;
                         }
                     }
@@ -211,7 +225,13 @@ namespace WatchBox
             else
             {
                 // No account specified: use default store
-                try { rootFolder = olNs.DefaultStore.GetRootFolder(); } catch { }
+                try
+                {
+                    dynamic defStore = olNs.DefaultStore;
+                    rootFolder = defStore.GetRootFolder();
+                    try { System.Runtime.InteropServices.Marshal.ReleaseComObject(defStore); } catch { }
+                }
+                catch { }
             }
 
             if (rootFolder == null) return;
@@ -265,6 +285,9 @@ namespace WatchBox
                     }
                 }
                 catch { }
+                // Release intermediate folder (not root, not the final target)
+                if (found && !object.ReferenceEquals(prev, rootFolder))
+                    try { System.Runtime.InteropServices.Marshal.ReleaseComObject(prev); } catch { }
                 if (!found) return null;
             }
             return current;
@@ -276,7 +299,7 @@ namespace WatchBox
             {
                 dynamic items = folder.Items;
                 items.ItemAdd += new Action<dynamic>(OnItemAdd);
-                _watchedItems.Add(items);
+                lock (_watchLock) { _watchedItems.Add(items); }
             }
             catch { }
 
@@ -289,7 +312,7 @@ namespace WatchBox
                     {
                         dynamic childItems = child.Items;
                         childItems.ItemAdd += new Action<dynamic>(OnItemAdd);
-                        _watchedItems.Add(childItems);
+                        lock (_watchLock) { _watchedItems.Add(childItems); }
                         // Release folder object; Items ref keeps the hook alive
                         try { System.Runtime.InteropServices.Marshal.ReleaseComObject(child); } catch { }
                     }

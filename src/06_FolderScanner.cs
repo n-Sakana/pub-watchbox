@@ -222,10 +222,16 @@ namespace WatchBox
                         break;
                     }
 
+                    string extractDirFull = Path.GetFullPath(extractDir);
                     foreach (var entry in archive.Entries)
                     {
                         if (string.IsNullOrEmpty(entry.Name)) continue;
-                        string entryDest = Path.Combine(extractDir, entry.FullName);
+                        string entryDest = Path.GetFullPath(
+                            Path.Combine(extractDir, entry.FullName));
+                        // Zip slip guard: reject entries that escape the extract directory
+                        if (!entryDest.StartsWith(extractDirFull + "\\") &&
+                            !entryDest.Equals(extractDirFull))
+                            continue;
                         // Use long path prefix to handle paths > 260 chars
                         string entryDestLong = LongPath(entryDest);
                         string entryDir = Path.GetDirectoryName(entryDestLong);

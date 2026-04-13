@@ -27,6 +27,7 @@ namespace WatchBox
                 case "getConfigValue": SendConfigValue(json); break;
                 case "setConfigValue": SetConfigValue(json); break;
                 case "openFile": OpenFile(json); break;
+                case "openDirectory": OpenDirectory(json); break;
             }
         }
 
@@ -34,21 +35,24 @@ namespace WatchBox
 
         void SendLog(string json)
         {
-            int profileIndex = 0;
-            var m = System.Text.RegularExpressions.Regex.Match(json, "\"profileIndex\"\\s*:\\s*(\\d+)");
-            if (m.Success) profileIndex = int.Parse(m.Groups[1].Value);
-
-            string outputRoot = Config.PGet(profileIndex, "output_root");
+            string outputRoot = ExtractJsonString(json, "outputRoot");
             var sb = new StringBuilder();
-            sb.Append("{\"entries\":[");
+            sb.Append("{\"rows\":[");
 
             if (!string.IsNullOrEmpty(outputRoot))
             {
                 string logPath = Path.Combine(outputRoot, "log.csv");
                 if (File.Exists(logPath))
                 {
+                    var logLines = new List<string>();
+                    using (var fs = new FileStream(logPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
+                    using (var sr = new StreamReader(fs, Encoding.UTF8))
+                    {
+                        string l;
+                        while ((l = sr.ReadLine()) != null) logLines.Add(l);
+                    }
                     bool first = true;
-                    foreach (var line in File.ReadAllLines(logPath, Encoding.UTF8))
+                    foreach (var line in logLines)
                     {
                         if (string.IsNullOrEmpty(line)) continue;
                         var cols = ManifestIO.CsvSplit(line);
@@ -125,12 +129,20 @@ namespace WatchBox
 
             if (File.Exists(csvPath))
             {
-                var lines = File.ReadAllLines(csvPath, Encoding.UTF8);
+                string[] lines;
+                using (var fs = new FileStream(csvPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
+                using (var sr = new StreamReader(fs, Encoding.UTF8))
+                {
+                    var lineList = new System.Collections.Generic.List<string>();
+                    string l;
+                    while ((l = sr.ReadLine()) != null) lineList.Add(l);
+                    lines = lineList.ToArray();
+                }
                 bool first = true;
                 foreach (var line in lines)
                 {
                     if (string.IsNullOrEmpty(line)) continue;
-                    var cols = line.Split(',');
+                    var cols = ManifestIO.CsvSplit(line);
                     if (cols.Length < 2) continue;
                     if (cols[0] == "entry_id" || cols[0] == "item_id") continue;
 
@@ -151,7 +163,8 @@ namespace WatchBox
         void AppendMailRow(StringBuilder sb, string[] cols)
         {
             // entry_id,sender_email,sender_name,subject,received_at,
-            // folder_path,body_path,msg_path,attachment_paths,mail_folder,body_text
+            // folder_path,body_path,msg_path,attachment_paths,mail_folder,body_text,
+            // to_recipients,cc_recipients
             sb.Append("{");
             sb.AppendFormat("\"entry_id\":\"{0}\"", JsonEsc(Col(cols, 0)));
             sb.AppendFormat(",\"sender_email\":\"{0}\"", JsonEsc(Col(cols, 1)));
@@ -164,6 +177,8 @@ namespace WatchBox
             sb.AppendFormat(",\"attachment_paths\":\"{0}\"", JsonEsc(Col(cols, 8)));
             sb.AppendFormat(",\"mail_folder\":\"{0}\"", JsonEsc(Col(cols, 9)));
             sb.AppendFormat(",\"body_text\":\"{0}\"", JsonEsc(Col(cols, 10)));
+            sb.AppendFormat(",\"to_recipients\":\"{0}\"", JsonEsc(Col(cols, 11)));
+            sb.AppendFormat(",\"cc_recipients\":\"{0}\"", JsonEsc(Col(cols, 12)));
             sb.Append("}");
         }
 
@@ -337,12 +352,9 @@ namespace WatchBox
             string content = "";
             try
             {
-                var fi = new FileInfo(filePath);
-                if (fi.Length > 102400)
-                    content = File.ReadAllText(filePath, Encoding.UTF8)
-                        .Substring(0, 102400) + "\n\n... (truncated)";
-                else
-                    content = File.ReadAllText(filePath, Encoding.UTF8);
+                content = File.ReadAllText(filePath, Encoding.UTF8);
+                if (content.Length > 102400)
+                    content = content.Substring(0, 102400) + "\n\n... (truncated)";
             }
             catch { content = "(unable to read file)"; }
 
@@ -360,6 +372,20 @@ namespace WatchBox
             {
                 try { System.Diagnostics.Process.Start(path); }
                 catch { }
+            }
+        }
+
+        void OpenDirectory(string json)
+        {
+            string path = ExtractJsonString(json, "path");
+            if (!string.IsNullOrEmpty(path))
+            {
+                string dir = Directory.Exists(path) ? path : Path.GetDirectoryName(path);
+                if (!string.IsNullOrEmpty(dir) && Directory.Exists(dir))
+                {
+                    try { System.Diagnostics.Process.Start("explorer.exe", dir); }
+                    catch { }
+                }
             }
         }
 
