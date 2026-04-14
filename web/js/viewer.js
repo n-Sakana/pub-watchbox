@@ -344,6 +344,9 @@ const Viewer = {
     },
 
     showTreeContextMenu(x, y, folderPath) {
+        // For mail profiles, tree folder paths are Outlook paths (not filesystem paths),
+        // so "Open in Explorer" is only meaningful for folder profiles.
+        if (this.currentType !== 'folder') return;
         const menu = document.getElementById('contextMenu');
         menu.innerHTML = '';
         const item = document.createElement('div');

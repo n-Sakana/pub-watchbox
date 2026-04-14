@@ -202,8 +202,16 @@ namespace WatchBox
                         // Only include mail folders (DefaultItemType == olMailItem == 0)
                         if ((int)child.DefaultItemType != 0) continue;
                         // Skip hidden system folders (PR_ATTR_HIDDEN)
-                        try { if ((bool)child.PropertyAccessor.GetProperty(
-                            "http://schemas.microsoft.com/mapi/proptag/0x10F4000B")) continue; }
+                        try
+                        {
+                            dynamic cpa = child.PropertyAccessor;
+                            bool hidden = false;
+                            try { hidden = (bool)cpa.GetProperty(
+                                "http://schemas.microsoft.com/mapi/proptag/0x10F4000B"); }
+                            catch { }
+                            finally { try { Marshal.ReleaseComObject(cpa); } catch { } }
+                            if (hidden) continue;
+                        }
                         catch { }
                         string indent = new string(' ', depth * 2);
                         list.Add(new[] { prefix + indent + (string)child.Name, (string)child.FolderPath });
@@ -320,6 +328,7 @@ namespace WatchBox
             string dateFilter, string keywordFilter,
             List<ScanResult> results, bool recurse = true)
         {
+            // Items processing — may fail for container-only folders (e.g. store root)
             try
             {
                 string folderRoot;
@@ -381,17 +390,17 @@ namespace WatchBox
                                 try { recv2 = (DateTime)item.ReceivedTime; } catch { }
                                 string dedupKey = subj2 + "|" + saddr2 + "|" +
                                     recv2.ToString("yyyy-MM-dd\\THH:mm:ss");
-                                if (_dedupKeys != null && _dedupKeys.Contains(dedupKey))
-                                    continue;
-
-                                // Export files immediately (msg, body, meta, attachments)
-                                var sr = ExportAndBuildResult(item, folderRoot, outputRoot, smtp);
-                                if (sr != null)
+                                if (_dedupKeys == null || !_dedupKeys.Contains(dedupKey))
                                 {
-                                    results.Add(sr);
-                                    _exported.Add(eid);
-                                    if (_dedupKeys != null) _dedupKeys.Add(dedupKey);
-                                    OnProgress(results.Count, sr.Subject);
+                                    // Export files immediately (msg, body, meta, attachments)
+                                    var sr = ExportAndBuildResult(item, folderRoot, outputRoot, smtp);
+                                    if (sr != null)
+                                    {
+                                        results.Add(sr);
+                                        _exported.Add(eid);
+                                        if (_dedupKeys != null) _dedupKeys.Add(dedupKey);
+                                        OnProgress(results.Count, sr.Subject);
+                                    }
                                 }
                             }
                         }
@@ -412,16 +421,23 @@ namespace WatchBox
                 if (!object.ReferenceEquals(rawItems, items) &&
                     (items2 == null || !object.ReferenceEquals(rawItems, items2)))
                     try { Marshal.ReleaseComObject(rawItems); } catch { }
+            }
+            catch { }
 
-                if (recurse && !CancelRequested)
+            // Recurse into subfolders — runs even if items processing above failed
+            if (recurse && !CancelRequested)
+            {
+                try
+                {
                     foreach (dynamic child in folder.Folders)
                     {
                         if (CancelRequested) break;
                         try { ScanTree(child, outputRoot, smtp, dateFilter, keywordFilter, results, true); }
                         finally { try { Marshal.ReleaseComObject(child); } catch { } }
                     }
+                }
+                catch { }
             }
-            catch { }
         }
 
         // --- Bulk scan: uses existing Scan() flow but caches instead of exporting ---
@@ -687,20 +703,38 @@ namespace WatchBox
             // Try PR_SMTP_ADDRESS (works for most recipients)
             try
             {
-                string smtp = (string)recip.PropertyAccessor.GetProperty(
-                    "http://schemas.microsoft.com/mapi/proptag/0x39FE001F");
-                if (!string.IsNullOrEmpty(smtp)) return smtp;
+                dynamic pa = recip.PropertyAccessor;
+                try
+                {
+                    string smtp = (string)pa.GetProperty(
+                        "http://schemas.microsoft.com/mapi/proptag/0x39FE001F");
+                    if (!string.IsNullOrEmpty(smtp)) return smtp;
+                }
+                catch { }
+                finally { try { Marshal.ReleaseComObject(pa); } catch { } }
             }
             catch { }
             // Fallback: Exchange user
             try
             {
-                dynamic exchUser = recip.AddressEntry.GetExchangeUser();
-                if (exchUser != null)
+                dynamic ae = recip.AddressEntry;
+                dynamic exchUser = null;
+                try
                 {
-                    string smtp = (string)exchUser.PrimarySmtpAddress;
-                    try { Marshal.ReleaseComObject(exchUser); } catch { }
-                    if (!string.IsNullOrEmpty(smtp)) return smtp;
+                    exchUser = ae.GetExchangeUser();
+                    if (exchUser != null)
+                    {
+                        string smtp = (string)exchUser.PrimarySmtpAddress;
+                        try { Marshal.ReleaseComObject(exchUser); } catch { }
+                        exchUser = null;
+                        if (!string.IsNullOrEmpty(smtp)) return smtp;
+                    }
+                }
+                catch { }
+                finally
+                {
+                    if (exchUser != null) try { Marshal.ReleaseComObject(exchUser); } catch { }
+                    try { Marshal.ReleaseComObject(ae); } catch { }
                 }
             }
             catch { }

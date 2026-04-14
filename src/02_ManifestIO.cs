@@ -6,7 +6,7 @@ using System.Text;
 namespace WatchBox
 {
     // Handles reading and writing manifest.csv in type-specific formats.
-    // Mail format: entry_id,sender_email,sender_name,subject,received_at,folder_path,body_path,msg_path,attachment_paths,mail_folder,body_text
+    // Mail format: entry_id,sender_email,sender_name,subject,received_at,folder_path,body_path,msg_path,attachment_paths,mail_folder,body_text,to_recipients,cc_recipients
     // Folder format: item_id,file_name,file_path,folder_path,relative_path,file_size,modified_at
     public static class ManifestIO
     {
