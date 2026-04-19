@@ -1,0 +1,10 @@
+item_id,file_name,file_path,folder_path,relative_path,file_size,modified_at
+a1b2c3d4,readme.txt,C:\workspace\pub\watchbox\sample\test_folder\docs\readme.txt,C:\workspace\pub\watchbox\sample\test_folder\docs,docs\readme.txt,178,2026-04-01T10:00:00
+e5f6a7b8,notes.md,C:\workspace\pub\watchbox\sample\test_folder\docs\notes.md,C:\workspace\pub\watchbox\sample\test_folder\docs,docs\notes.md,245,2026-04-02T14:30:00
+c9d0e1f2,test.html,C:\workspace\pub\watchbox\sample\test_folder\images\test.html,C:\workspace\pub\watchbox\sample\test_folder\images,images\test.html,312,2026-04-02T16:00:00
+f3a4b5c6,config.json,C:\workspace\pub\watchbox\sample\test_folder\config.json,C:\workspace\pub\watchbox\sample\test_folder,config.json,102,2026-04-03T09:15:00
+d7e8f9a0,sample.png,C:\workspace\pub\watchbox\sample\test_folder\images\sample.png,C:\workspace\pub\watchbox\sample\test_folder\images,images\sample.png,4200,2026-04-03T10:00:00
+b1c2d3e4,sample.xlsx,C:\workspace\pub\watchbox\sample\test_folder\docs\sample.xlsx,C:\workspace\pub\watchbox\sample\test_folder\docs,docs\sample.xlsx,3100,2026-04-03T11:00:00
+f5a6b7c8,sample.docx,C:\workspace\pub\watchbox\sample\test_folder\docs\sample.docx,C:\workspace\pub\watchbox\sample\test_folder\docs,docs\sample.docx,2800,2026-04-03T12:00:00
+a9b0c1d2,sample.pptx,C:\workspace\pub\watchbox\sample\test_folder\docs\sample.pptx,C:\workspace\pub\watchbox\sample\test_folder\docs,docs\sample.pptx,3500,2026-04-03T13:00:00
+e3f4a5b6,sample.pdf,C:\workspace\pub\watchbox\sample\test_folder\docs\sample.pdf,C:\workspace\pub\watchbox\sample\test_folder\docs,docs\sample.pdf,580,2026-04-03T14:00:00

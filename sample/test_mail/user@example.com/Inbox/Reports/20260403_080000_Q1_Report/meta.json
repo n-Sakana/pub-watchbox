@@ -1,0 +1,12 @@
+{
+  "entry_id": "AAA003",
+  "mailbox_address": "user@example.com",
+  "folder_path": "\\user@example.com\\Inbox\\Reports",
+  "sender_name": "Charlie Finance",
+  "sender_email": "charlie@example.com",
+  "subject": "Q1 Report",
+  "received_at": "2026-04-03T08:00:00",
+  "body_path": "body.txt",
+  "msg_path": "mail.msg",
+  "attachments": [{"path": "q1_numbers.xlsx"}, {"path": "summary.png"}]
+}

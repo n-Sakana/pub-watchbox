@@ -1,0 +1,12 @@
+{
+  "entry_id": "AAA002",
+  "mailbox_address": "user@example.com",
+  "folder_path": "\\user@example.com\\Inbox",
+  "sender_name": "Bob Smith",
+  "sender_email": "bob@example.com",
+  "subject": "Meeting notes",
+  "received_at": "2026-04-02T09:00:00",
+  "body_path": "body.txt",
+  "msg_path": "mail.msg",
+  "attachments": []
+}

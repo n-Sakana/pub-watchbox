@@ -1,0 +1,13 @@
+Hi team,
+
+Here is the latest project update for Q1 2026.
+
+Key milestones:
+- Backend API completed
+- Frontend design review passed
+- Performance testing underway
+
+Please review the attached report and share your feedback by Friday.
+
+Best regards,
+Alice Johnson

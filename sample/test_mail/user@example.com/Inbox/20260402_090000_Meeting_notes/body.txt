@@ -1,0 +1,15 @@
+Meeting Notes - April 2nd
+
+Attendees: Alice, Bob, Charlie, Diana
+
+Agenda:
+1. Sprint review
+2. Deployment schedule
+3. Customer feedback
+
+Action items:
+- Bob: Fix login timeout issue by Apr 5
+- Charlie: Update API docs
+- Diana: Schedule demo for stakeholders
+
+Next meeting: Apr 9, 2026
