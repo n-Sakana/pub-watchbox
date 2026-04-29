@@ -1,0 +1,20 @@
+{
+  "name": "watchbox",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Audit manifest for vendored WebView assets.",
+  "scripts": {
+    "build": "node --check web/js/bridge.js && node --check web/js/settings.js && node --check web/js/viewer.js",
+    "test": "powershell -NoProfile -ExecutionPolicy Bypass -File ./test_usecases.ps1"
+  },
+  "dependencies": {
+    "@e965/xlsx": "0.20.3",
+    "@fluentui/web-components": "2.6.1",
+    "ag-grid-community": "31.3.4",
+    "daisyui": "4.12.24",
+    "docx-preview": "0.3.7",
+    "jszip": "3.10.1",
+    "marked": "15.0.12",
+    "tailwindcss": "3.4.17"
+  }
+}
