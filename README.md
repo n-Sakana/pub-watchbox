@@ -1,6 +1,6 @@
 # watchbox
 
-Windows 上で mail / folder を監視・収集し、`manifest.csv` と `log.csv` を生成するツール。PowerShell ローダーが C# ソースをその場でコンパイルし、WPF UI を起動する。
+Windows 上で mail / folder を監視・収集し、`manifest.csv` と `log.csv` を生成するツール。PowerShell ローダーが C# ソースをその場でコンパイルし、WPF の監視画面と WebView2 の設定・検索画面を起動する。
 
 ## 役割
 
@@ -18,6 +18,7 @@ CaseDesk から見ると、watchbox は外部収集と manifest 生成の中核�
 - PowerShell 5.1
 - Outlook データを扱う場合は Outlook desktop app
 - WPF が動く .NET / Windows 環境
+- Microsoft Edge WebView2 Runtime
 
 ## 起動
 
@@ -34,11 +35,11 @@ watchbox.ps1
   ├── Add-Type でその場コンパイル
   └── [WatchBox.App]::Run()
 
-WPF UI
-  ├── MonitorWindow   メイン画面
-  ├── SettingsWindow  profile 設定
-  ├── SearchWindow    manifest 検索
-  └── ToastPopup      通知
+UI
+  ├── MonitorWindow   WPF のメイン画面
+  ├── SettingsWindow  WebView2 + web/settings.html
+  ├── SearchWindow    WebView2 + web/viewer.html
+  └── ToastPopup      WPF の通知
 ```
 
 ## profile
@@ -126,7 +127,7 @@ watchbox/
 ├── launch.bat
 ├── launch.vbs
 ├── README.md
-└── src/
+├── src/
     ├── 00_FolderPicker.cs
     ├── 01_App.cs
     ├── 02_ManifestIO.cs
@@ -138,8 +139,11 @@ watchbox/
     ├── 07a_EventWatcher.cs
     ├── 08_MonitorForm.cs
     ├── 08a_ToastPopup.cs
+    ├── 08b_WebViewHost.cs
     ├── 09_SettingsForm.cs
     └── 10_SearchForm.cs
+├── web/                    Settings / Viewer の HTML・CSS・JavaScript
+└── lib/                    WebView2 managed / native DLL
 ```
 
 旧 `mailpull` README の説明は現状より狭い。watchbox は mail 専用ではなく、folder profile と event watch まで含む。
